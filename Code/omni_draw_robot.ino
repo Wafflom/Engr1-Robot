@@ -39,16 +39,15 @@
 #define PEN_SETTLE_MS   300
 
 // ---- PID ----
-#define KP  4.0f
-#define KI  0.5f
-#define KD  0.3f
+#define KP  8.0f
+#define KI  1.0f
+#define KD  0.5f
 
 // ---- MOTION ----
 #define LOOP_MS       10
-#define POS_TOL_MM    1.5f
-#define MAX_PWM       240
-#define MIN_PWM       150     // minimum PWM that actually moves motors under load
-#define INTEGRAL_CAP  200.0f
+#define POS_TOL_MM    2.0f
+#define SPEED         255
+#define INTEGRAL_CAP  300.0f
 
 // ---- STAR ----
 #define STAR_RADIUS   250.0f   // 25cm
@@ -83,18 +82,12 @@ ISR(PCINT0_vect) {
 
 // ---- MOTOR HELPERS ----
 void driveMotor(uint8_t idx, float pwm) {
-  if (fabsf(pwm) < 10) {
-    // PID says basically zero — release motor completely
+  if (fabsf(pwm) < 1) {
     mot[idx]->setSpeed(0);
     mot[idx]->run(RELEASE);
     return;
   }
-  // If PID wants movement, ensure at least MIN_PWM so motor
-  // actually turns instead of just whining
-  float absPwm = fabsf(pwm);
-  if (absPwm < MIN_PWM) absPwm = MIN_PWM;
-  if (absPwm > MAX_PWM) absPwm = MAX_PWM;
-  mot[idx]->setSpeed((uint8_t)absPwm);
+  mot[idx]->setSpeed((uint8_t)min(fabsf(pwm), 255.0f));
   mot[idx]->run(pwm > 0 ? FORWARD : BACKWARD);
 }
 
@@ -153,10 +146,10 @@ bool pidStep(float dt) {
   for (uint8_t i = 0; i < 3; i++)
     w[i] = -sinW[i] * cx + cosW[i] * cy;
 
-  // Scale down if any wheel exceeds max
+  // Normalize so peak wheel = SPEED (full power)
   float pk = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
-  if (pk > MAX_PWM) {
-    float s = (float)MAX_PWM / pk;
+  if (pk > 0.001f) {
+    float s = (float)SPEED / pk;
     w[0] *= s; w[1] *= s; w[2] *= s;
   }
 

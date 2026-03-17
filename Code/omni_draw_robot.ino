@@ -1,127 +1,231 @@
 /*
- * Omni Robot — Circle + Smiley Face
- * ===================================
- * Draws a circle, then a smiley face inside it (two eyes + mouth).
- * Press button on pin 12 to start. Encoder + PID position control.
+ * Omni-Wheel G-code Plotter Firmware
+ * ====================================
+ * This is a generic G-code plotter that runs on a 3-wheel omni robot.
+ * It reads G-code from the included drawing.h file and executes it.
+ * The user can replace drawing.h with any G-code file to draw
+ * different designs — the firmware itself never needs to change.
+ *
+ * Think of this like a CNC plotter:
+ *   - The firmware is the "machine" (handles motors, encoders, PID)
+ *   - The drawing.h is the "job file" (the G-code program to draw)
+ *   - Press the button to start the job
+ *
+ * Supported G-code:
+ *   G0 Xn Yn       - Rapid move (pen up)
+ *   G1 Xn Yn       - Linear move (pen down)
+ *   G2 Xn Yn In Jn - Clockwise arc (pen down)
+ *   G3 Xn Yn In Jn - Counter-clockwise arc (pen down)
+ *   M3              - Pen down
+ *   M5              - Pen up
+ *   ; comment       - Ignored
  *
  * Hardware:
  *   - Arduino Uno R3
  *   - Adafruit Motor Shield V2 (I2C)
- *   - 3x N20 DC motors w/ magnetic hall-effect encoders (6V, 1:50)
+ *   - 3x N20 DC motors with hall-effect encoders (6V, 1:50 gear)
  *     M1 = front (90°), M2 = rear-left (210°), M3 = rear-right (330°)
- *   - SG90 servo on Shield Servo 1 (pin 10)
- *   - Push button on pin 12 (pulled high, press = LOW)
+ *   - SG90 servo on Motor Shield Servo 1 header (pin 10)
+ *   - Push button on pin 12 wired to GND (uses INPUT_PULLUP)
+ *
+ * PID controller follows curiores/ArduinoTutorials pattern.
  */
 
-#include <Wire.h>
-#include <Adafruit_MotorShield.h>
-#include <Servo.h>
-#include "shapes.h"
+// ============================================================
+//  INCLUDES
+// ============================================================
 
-Adafruit_MotorShield AFMS = Adafruit_MotorShield();
-Adafruit_DCMotor *m1 = AFMS.getMotor(1);
-Adafruit_DCMotor *m2 = AFMS.getMotor(2);
-Adafruit_DCMotor *m3 = AFMS.getMotor(3);
-Servo penServo;
+#include <Wire.h>                    // I2C bus (needed by motor shield)
+#include <Adafruit_MotorShield.h>    // Adafruit Motor Shield V2 driver
+#include <Servo.h>                   // Servo library for pen lift
+#include "drawing.h"                 // G-code program to draw (user-replaceable)
 
-// ---- CONFIG ----
-#define SERVO_PIN       10
-#define PEN_UP_ANGLE    45
-#define PEN_DOWN_ANGLE  0
-#define PEN_SETTLE_MS   300
-#define SPEED           255
-#define BUTTON_PIN      12
+// ============================================================
+//  HARDWARE OBJECTS
+// ============================================================
 
-// ---- ENCODER PINS ----
-#define ENC1_A  2
-#define ENC1_B  4
-#define ENC2_A  3
-#define ENC2_B  5
-#define ENC3_A  8
-#define ENC3_B  7
+Adafruit_MotorShield AFMS = Adafruit_MotorShield();  // Motor shield (default I2C address)
+Adafruit_DCMotor *m1 = AFMS.getMotor(1);  // Front motor (90°)
+Adafruit_DCMotor *m2 = AFMS.getMotor(2);  // Rear-left motor (210°)
+Adafruit_DCMotor *m3 = AFMS.getMotor(3);  // Rear-right motor (330°)
+Servo penServo;                             // Pen lift servo
 
-// ---- ENCODER / WHEEL MATH ----
-#define ENCODER_CPR   700.0f
-#define WHEEL_DIA_MM  36.0f
-#define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
+// ============================================================
+//  CONFIGURATION — Adjust these for your robot
+// ============================================================
 
-// ---- PID GAINS ----
-float kp = 40.0;
-float kd = 0.5;
-float ki = 10.0;
+// -- Pin assignments --
+#define SERVO_PIN       10   // Servo signal (Motor Shield Servo 1 header)
+#define BUTTON_PIN      12   // Start button (wired to GND, uses internal pullup)
 
-#define MOVE_TIMEOUT_MS 8000UL
-#define POS_TOL_MM      3.0f
+// -- Encoder pins --
+#define ENC1_A  2   // Motor 1 encoder channel A (hardware interrupt INT0)
+#define ENC1_B  4   // Motor 1 encoder channel B (direction)
+#define ENC2_A  3   // Motor 2 encoder channel A (hardware interrupt INT1)
+#define ENC2_B  5   // Motor 2 encoder channel B (direction)
+#define ENC3_A  8   // Motor 3 encoder channel A (pin-change interrupt PCINT0)
+#define ENC3_B  7   // Motor 3 encoder channel B (direction)
 
-// ---- WHEEL GEOMETRY ----
-const float W_ANG[3] = {
-   90.0f * PI / 180.0f,
-  210.0f * PI / 180.0f,
-  330.0f * PI / 180.0f
+// -- Servo angles --
+#define PEN_UP_ANGLE    45   // Servo angle when pen is lifted (degrees)
+#define PEN_DOWN_ANGLE  0    // Servo angle when pen touches paper (degrees)
+#define PEN_SETTLE_MS   300  // Wait time after servo move (ms)
+
+// -- Encoder/wheel specs --
+#define ENCODER_CPR   700.0f   // Ticks per wheel revolution (14 CPR * 50:1 gear)
+#define WHEEL_DIA_MM  36.0f    // Wheel outer diameter (mm)
+#define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)  // ~0.1616 mm/tick
+
+// -- PID gains --
+// kp: proportional — main correction force toward target
+// kd: derivative — braking to prevent overshoot
+// ki: integral — builds up when stuck to push through friction
+float kp = 40.0;   // High value because error is in mm (small numbers)
+float kd = 0.5;    // Moderate damping
+float ki = 10.0;   // Overcomes motor stiction
+
+// -- Movement parameters --
+#define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
+#define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
+#define SPEED             255      // Full PWM for open-loop circle drawing
+
+// -- Arc parameters --
+#define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
+#define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
+
+// ============================================================
+//  WHEEL GEOMETRY
+//
+//  Three omni-wheels at 120-degree intervals.
+//  These angles define where each motor is mounted on the robot.
+//  sin/cos are pre-computed in setup() for speed.
+// ============================================================
+
+const float W_ANG[3] = {              // Wheel mounting angles (radians)
+   90.0f * PI / 180.0f,               // Motor 1: front (90°)
+  210.0f * PI / 180.0f,               // Motor 2: rear-left (210°)
+  330.0f * PI / 180.0f                // Motor 3: rear-right (330°)
 };
-float sinW[3], cosW[3];
-
-// ---- ENCODER STATE ----
-volatile int posi[3] = {0, 0, 0};
-int8_t encSign[3] = {1, 1, 1};
-
-// ---- PID STATE ----
-long prevT = 0;
-float eprevX = 0, eprevY = 0;
-float eintegralX = 0, eintegralY = 0;
-
-// ---- ODOMETRY ----
-float posX = 0.0f, posY = 0.0f;
-int posPrev[3] = {0, 0, 0};
-
-// ---- PATH LENGTH (for circles) ----
-float pathLen = 0.0f;
-float prevPathX = 0.0f, prevPathY = 0.0f;
+float sinW[3], cosW[3];               // Pre-computed trig values
 
 // ============================================================
-//  ENCODER ISRs (curiores tutorial pattern)
+//  ENCODER STATE
+//
+//  Encoder tick counters are updated by ISRs (interrupt service
+//  routines) that fire automatically on encoder pulses.
+//  "volatile" tells the compiler these change asynchronously.
 // ============================================================
 
+volatile int posi[3] = {0, 0, 0};     // Raw tick counters (updated by ISRs)
+int8_t encSign[3] = {1, 1, 1};        // Polarity: +1 normal, -1 reversed (set by calibration)
+
+// ============================================================
+//  PID CONTROLLER STATE
+// ============================================================
+
+long prevT = 0;            // Previous timestamp in microseconds
+float eprevX = 0;          // Previous X error (for derivative)
+float eprevY = 0;          // Previous Y error (for derivative)
+float eintegralX = 0;      // Accumulated X error (integral term)
+float eintegralY = 0;      // Accumulated Y error (integral term)
+
+// ============================================================
+//  ODOMETRY STATE (position tracking)
+// ============================================================
+
+float posX = 0.0f;                    // X position since last reset (mm)
+float posY = 0.0f;                    // Y position since last reset (mm)
+int posPrev[3] = {0, 0, 0};           // Previous encoder snapshots
+
+// ============================================================
+//  PATH LENGTH STATE (used for circle drawing)
+// ============================================================
+
+float pathLen = 0.0f;                  // Distance traveled since last reset
+float prevPathX = 0.0f;               // Previous position for distance calc
+float prevPathY = 0.0f;
+
+// ============================================================
+//  G-CODE INTERPRETER STATE
+//
+//  The interpreter tracks absolute position in the G-code
+//  coordinate system. This persists across all moves.
+//  (Odometry resets between moves, but gcX/gcY are cumulative.)
+// ============================================================
+
+float gcX = 0.0f;          // Absolute X in G-code coords (mm)
+float gcY = 0.0f;          // Absolute Y in G-code coords (mm)
+bool penIsDown = false;     // Current pen state
+
+// ============================================================
+//  ENCODER ISRs (Interrupt Service Routines)
+//
+//  These run automatically when an encoder pulse is detected.
+//  They count ticks to track wheel rotation.
+//
+//  Pattern from curiores/ArduinoTutorials:
+//  On RISING edge of channel A, read channel B:
+//    B HIGH → forward → increment
+//    B LOW  → backward → decrement
+// ============================================================
+
+// Motor 1 ISR — hardware interrupt on pin 2 (INT0)
 void enc1ISR() {
-  int b = digitalRead(ENC1_B);
-  if (b > 0) { posi[0]++; } else { posi[0]--; }
+  int b = digitalRead(ENC1_B);  // Read direction channel
+  if (b > 0) { posi[0]++; }    // Forward
+  else       { posi[0]--; }    // Backward
 }
 
+// Motor 2 ISR — hardware interrupt on pin 3 (INT1)
 void enc2ISR() {
-  int b = digitalRead(ENC2_B);
-  if (b > 0) { posi[1]++; } else { posi[1]--; }
+  int b = digitalRead(ENC2_B);  // Read direction channel
+  if (b > 0) { posi[1]++; }    // Forward
+  else       { posi[1]--; }    // Backward
 }
 
-volatile uint8_t enc3PrevA = 0;
+// Motor 3 ISR — pin-change interrupt on pin 8 (PCINT0)
+// Pin-change fires on BOTH edges, so we filter for rising only
+volatile uint8_t enc3PrevA = 0;       // Previous state of channel A
 ISR(PCINT0_vect) {
-  uint8_t a = digitalRead(ENC3_A);
-  if (a && !enc3PrevA) {
-    int b = digitalRead(ENC3_B);
-    if (b > 0) { posi[2]++; } else { posi[2]--; }
+  uint8_t a = digitalRead(ENC3_A);    // Read current channel A state
+  if (a && !enc3PrevA) {              // Rising edge only (was 0, now 1)
+    int b = digitalRead(ENC3_B);      // Read direction channel
+    if (b > 0) { posi[2]++; }        // Forward
+    else       { posi[2]--; }        // Backward
   }
-  enc3PrevA = a;
+  enc3PrevA = a;                      // Save for next edge comparison
 }
 
 // ============================================================
-//  ODOMETRY
+//  ODOMETRY FUNCTIONS
+//
+//  Reads encoder ticks, converts to mm of wheel travel,
+//  then uses forward kinematics to estimate robot center
+//  movement in X and Y.
 // ============================================================
 
+// Update robot position from encoder readings
 void updateOdometry() {
+  // Atomically read all encoder counters (disable interrupts briefly)
   int pos[3];
   noInterrupts();
   pos[0] = posi[0]; pos[1] = posi[1]; pos[2] = posi[2];
   interrupts();
 
+  // Calculate distance each wheel moved since last update
   float d[3];
   for (uint8_t i = 0; i < 3; i++) {
     d[i] = (float)(pos[i] - posPrev[i]) * MM_PER_TICK * encSign[i];
     posPrev[i] = pos[i];
   }
 
+  // Forward kinematics: 3 wheel distances → robot X,Y displacement
+  // The (2/3) factor comes from the pseudo-inverse of the kinematics matrix
   posX += (2.0f / 3.0f) * (-sinW[0]*d[0] - sinW[1]*d[1] - sinW[2]*d[2]);
   posY += (2.0f / 3.0f) * ( cosW[0]*d[0] + cosW[1]*d[1] + cosW[2]*d[2]);
 }
 
+// Reset position to (0,0) — call before each relative move
 void resetOdometry() {
   noInterrupts();
   posPrev[0] = posi[0]; posPrev[1] = posi[1]; posPrev[2] = posi[2];
@@ -129,11 +233,13 @@ void resetOdometry() {
   posX = 0.0f; posY = 0.0f;
 }
 
+// Reset path length counter (for measuring circle circumference)
 void resetPathLength() {
   pathLen = 0.0f;
   prevPathX = posX; prevPathY = posY;
 }
 
+// Add distance traveled since last call to path length
 void updatePathLength() {
   float dx = posX - prevPathX;
   float dy = posY - prevPathY;
@@ -142,15 +248,17 @@ void updatePathLength() {
 }
 
 // ============================================================
-//  MOTOR CONTROL (curiores tutorial pattern)
+//  MOTOR CONTROL
 // ============================================================
 
+// Stop all motors (coast, not brake)
 void stopAll() {
   m1->run(RELEASE); m1->setSpeed(0);
   m2->run(RELEASE); m2->setSpeed(0);
   m3->run(RELEASE); m3->setSpeed(0);
 }
 
+// Drive one motor: dir = 1 (forward), -1 (backward), 0 (release)
 void setMotor(Adafruit_DCMotor *m, int dir, int pwmVal) {
   m->setSpeed(pwmVal);
   if (dir == 1)       { m->run(FORWARD);  }
@@ -160,28 +268,36 @@ void setMotor(Adafruit_DCMotor *m, int dir, int pwmVal) {
 
 // ============================================================
 //  INVERSE KINEMATICS
+//
+//  Converts robot velocity (vx, vy) → individual wheel speeds.
+//  Each wheel drives perpendicular to its axle, so we project
+//  the velocity onto each wheel's drive direction.
 // ============================================================
 
+// Calculate wheel speeds from desired velocity
 void inverseKinematics(float vx, float vy, float *w) {
   for (uint8_t i = 0; i < 3; i++)
     w[i] = -sinW[i] * vx + cosW[i] * vy;
 }
 
+// Convert float wheel speeds to direction + PWM and send to motors
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
   for (uint8_t i = 0; i < 3; i++) {
-    int pwr = (int)fabs(w[i]);
-    if (pwr > 255) pwr = 255;
-    int dir = 1;
-    if (w[i] < 0) dir = -1;
-    if (pwr < 5) dir = 0;
+    int pwr = (int)fabs(w[i]);       // Power = absolute value
+    if (pwr > 255) pwr = 255;        // Cap at max PWM
+    int dir = 1;                      // Assume forward
+    if (w[i] < 0) dir = -1;          // Negative = backward
+    if (pwr < 5) dir = 0;            // Too small = release
     setMotor(motors[i], dir, pwr);
   }
 }
 
+// Drive at full speed in direction (vx, vy) — used for open-loop circles
 void driveVelocity(float vx, float vy) {
   float w[3];
   inverseKinematics(vx, vy, w);
+  // Normalize so fastest wheel runs at SPEED
   float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
   if (peak > 0.001f) {
     float s = (float)SPEED / peak;
@@ -191,69 +307,130 @@ void driveVelocity(float vx, float vy) {
 }
 
 // ============================================================
-//  PID MOVE TO (curiores tutorial pattern)
+//  PID POSITION CONTROLLER
+//
+//  Blocking function that moves the robot to a target position
+//  using closed-loop PID feedback. Runs until arrival or timeout.
+//
+//  Target is RELATIVE to last resetOdometry() call.
+//
+//  PID formula (curiores tutorial pattern):
+//    error = target - current
+//    derivative = (error - prev_error) / deltaT
+//    integral += error * deltaT
+//    output = kp*error + kd*derivative + ki*integral
 // ============================================================
 
 void moveTo(float targetX, float targetY) {
+  // Reset PID state for this new move
   eprevX = 0; eprevY = 0;
   eintegralX = 0; eintegralY = 0;
-  prevT = micros();
+  prevT = micros();    // Start timing
 
-  unsigned long deadline = millis() + MOVE_TIMEOUT_MS;
+  unsigned long deadline = millis() + MOVE_TIMEOUT_MS;  // Safety timeout
 
   while (true) {
+    // Time since last iteration (microsecond precision)
     long currT = micros();
-    float deltaT = ((float)(currT - prevT)) / 1.0e6;
+    float deltaT = ((float)(currT - prevT)) / 1.0e6;  // Convert to seconds
     prevT = currT;
 
-    updateOdometry();
+    updateOdometry();  // Read encoders and update position
 
+    // Position error
     float eX = targetX - posX;
     float eY = targetY - posY;
     float dist = sqrtf(eX * eX + eY * eY);
 
+    // Arrived?
     if (dist < POS_TOL_MM) { stopAll(); break; }
+
+    // Timeout?
     if (millis() >= deadline) {
       Serial.print(F("timeout pos=")); Serial.print(posX);
       Serial.print(F(",")); Serial.println(posY);
       stopAll(); break;
     }
 
+    // Derivative: how fast error is changing (damping)
     float dedtX = (eX - eprevX) / deltaT;
     float dedtY = (eY - eprevY) / deltaT;
-    eintegralX = eintegralX + eX * deltaT;
-    eintegralY = eintegralY + eY * deltaT;
 
+    // Integral: accumulated error (pushes through friction)
+    eintegralX += eX * deltaT;
+    eintegralY += eY * deltaT;
+
+    // PID output: velocity command
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
+    // Convert to wheel speeds and drive
     float w[3];
     inverseKinematics(uX, uY, w);
     applyWheelSpeeds(w);
 
+    // Save error for next derivative
     eprevX = eX; eprevY = eY;
   }
 }
 
 // ============================================================
-//  PEN HELPERS
+//  PEN CONTROL
 // ============================================================
 
-void penUp()   { penServo.write(PEN_UP_ANGLE);   delay(PEN_SETTLE_MS); }
-void penDown() { penServo.write(PEN_DOWN_ANGLE);  delay(PEN_SETTLE_MS); }
+// Lift pen off paper
+void penUp() {
+  if (penIsDown) {
+    penServo.write(PEN_UP_ANGLE);
+    delay(PEN_SETTLE_MS);
+    penIsDown = false;
+  }
+}
+
+// Lower pen onto paper
+void penDown() {
+  if (!penIsDown) {
+    penServo.write(PEN_DOWN_ANGLE);
+    delay(PEN_SETTLE_MS);
+    penIsDown = true;
+  }
+}
 
 // ============================================================
-//  DRAW CIRCLE (open-loop velocity sweep, encoder distance)
-//  Draws a circle of given radius, starting from bottom.
-//  Assumes robot is already at center before calling.
+//  G-CODE EXECUTION: ABSOLUTE MOVE
+//
+//  Converts absolute G-code coordinates to a relative PID move.
+//  The robot's odometry resets between moves, but the G-code
+//  state (gcX, gcY) tracks cumulative absolute position.
 // ============================================================
 
-void drawCircleAt(float cx, float cy, float radius, unsigned long timeout) {
-  // Move from wherever we are to the bottom of the circle
-  resetOdometry();
-  moveTo(cx, cy - radius);
+void gcMoveTo(float absX, float absY) {
+  float dx = absX - gcX;   // Delta from current absolute position
+  float dy = absY - gcY;
 
-  penDown();
+  // Skip tiny moves (less than 0.5mm)
+  if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f) {
+    gcX = absX; gcY = absY;
+    return;
+  }
+
+  resetOdometry();          // Zero out local position
+  moveTo(dx, dy);           // PID move by the delta
+  gcX = absX; gcY = absY;   // Update absolute tracker
+}
+
+// ============================================================
+//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep)
+//
+//  For 360° arcs (endpoint == startpoint), we use open-loop
+//  velocity sweep instead of PID — it's much smoother.
+//  The robot drives tangent to the circle, and we track
+//  the angle using: theta = path_length / radius
+// ============================================================
+
+void gcFullCircle(float radius, bool ccw) {
+  Serial.print(F("Circle R=")); Serial.println(radius);
+
   resetOdometry();
   resetPathLength();
 
@@ -261,90 +438,197 @@ void drawCircleAt(float cx, float cy, float radius, unsigned long timeout) {
   unsigned long t0 = millis();
 
   while (theta < 2.0f * PI) {
-    driveVelocity(cosf(theta), sinf(theta));
+    float vx = cosf(theta);
+    float vy = ccw ? sinf(theta) : -sinf(theta);
+    driveVelocity(vx, vy);
     delay(1);
+
     updateOdometry();
     updatePathLength();
-    theta = pathLen / radius;
+    theta = pathLen / radius;  // angle = arc_length / radius
 
-    if (millis() - t0 > timeout) {
+    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
       Serial.println(F("circle timeout"));
       break;
     }
   }
-
   stopAll();
-  penUp();
-
-  // Return to circle center
-  resetOdometry();
-  moveTo(-cx, -(cy - radius));
 }
 
 // ============================================================
-//  DRAW MOUTH (line segments through PROGMEM points)
-//  Moves to first point pen-down, then traces through all.
+//  G-CODE EXECUTION: ARC (G2/G3)
+//
+//  Handles both full circles and partial arcs.
+//  Full circle: detected when endpoint ≈ startpoint → velocity sweep
+//  Partial arc: subdivided into line segments → PID to each
+//
+//  Parameters:
+//    endX, endY — arc endpoint (absolute)
+//    ci, cj — offset from current position to arc center
+//    ccw — true for G3 (counter-clockwise), false for G2 (clockwise)
 // ============================================================
 
-void drawMouth() {
-  Serial.println(F("Mouth"));
+void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
+  // Arc center in absolute coordinates
+  float cx = gcX + ci;
+  float cy = gcY + cj;
+  float radius = sqrtf(ci * ci + cj * cj);
 
-  // Move to first mouth point
-  float firstX = pgm_read_float(&mouth_pts[0][0]);
-  float firstY = pgm_read_float(&mouth_pts[0][1]);
-  resetOdometry();
-  moveTo(firstX, firstY);
-
-  penDown();
-  resetOdometry();
-
-  // Draw through remaining points relative to first point
-  float cumX = 0.0f, cumY = 0.0f;
-  for (uint8_t i = 1; i < MOUTH_NUM_PTS; i++) {
-    float px = pgm_read_float(&mouth_pts[i][0]);
-    float py = pgm_read_float(&mouth_pts[i][1]);
-    cumX = px - firstX;
-    cumY = py - firstY;
-    moveTo(cumX, cumY);
+  // Full circle check (endpoint ≈ startpoint)
+  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
+    penDown();
+    gcFullCircle(radius, ccw);
+    return;
   }
 
-  stopAll();
-  penUp();
+  // Partial arc — calculate start and end angles
+  float startAng = atan2f(gcY - cy, gcX - cx);
+  float endAng   = atan2f(endY - cy, endX - cx);
 
-  // Return to center: we're at last mouth point
-  float lastX = pgm_read_float(&mouth_pts[MOUTH_NUM_PTS - 1][0]);
-  float lastY = pgm_read_float(&mouth_pts[MOUTH_NUM_PTS - 1][1]);
-  resetOdometry();
-  moveTo(-lastX, -lastY);
+  // Calculate sweep angle
+  float sweep;
+  if (ccw) {
+    sweep = endAng - startAng;
+    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CCW
+  } else {
+    sweep = startAng - endAng;
+    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CW
+  }
+
+  // Subdivide arc into line segments
+  float arcLen = radius * sweep;
+  int numSegs = (int)(arcLen / ARC_SEG_MM);
+  if (numSegs < 4) numSegs = 4;  // Minimum 4 segments
+
+  penDown();
+
+  // Move through each segment point on the arc
+  for (int s = 1; s <= numSegs; s++) {
+    float frac = (float)s / (float)numSegs;
+    float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
+    float px = cx + radius * cosf(ang);
+    float py = cy + radius * sinf(ang);
+    gcMoveTo(px, py);
+  }
+
+  gcMoveTo(endX, endY);  // Ensure we end exactly at the target
 }
 
 // ============================================================
-//  DRAW SMILEY FACE
-//  From center: outer circle, left eye, right eye, mouth.
+//  G-CODE PARSER
+//
+//  Reads text G-code lines and extracts commands + parameters.
 // ============================================================
 
-void drawSmiley() {
-  // 1. Outer circle
-  Serial.println(F("Outer circle"));
-  drawCircleAt(0, 0, RADIUS_MM, CIRCLE_TIMEOUT_MS);
-  delay(200);
+// Find a parameter letter in a G-code line and return its numeric value
+// Example: parseParam("G1 X50.5 Y-20", 'X', 0) → 50.5
+float parseParam(const char *line, char param, float defVal) {
+  const char *p = line;
+  while (*p) {
+    if (*p == param || *p == (param + 32)) {  // Case insensitive
+      return atof(p + 1);
+    }
+    p++;
+  }
+  return defVal;  // Not found
+}
 
-  // 2. Left eye (small circle)
-  Serial.println(F("Left eye"));
-  drawCircleAt(-EYE_OFFSET_X, EYE_OFFSET_Y, EYE_RADIUS_MM, EYE_TIMEOUT_MS);
-  delay(200);
+// Parse the command code from a G-code line
+// Returns: G0→0, G1→10, G2→20, G3→30, M3→1003, M5→1005, -1→skip
+int parseCommand(const char *line) {
+  const char *p = line;
+  while (*p == ' ') p++;                              // Skip spaces
+  if (*p == ';' || *p == '\0' || *p == '\n') return -1;  // Comment/empty
 
-  // 3. Right eye (small circle)
-  Serial.println(F("Right eye"));
-  drawCircleAt(EYE_OFFSET_X, EYE_OFFSET_Y, EYE_RADIUS_MM, EYE_TIMEOUT_MS);
-  delay(200);
+  if (*p == 'G' || *p == 'g') return (int)(atof(p + 1) * 10);
+  if (*p == 'M' || *p == 'm') return 1000 + atoi(p + 1);
+  return -1;
+}
 
-  // 4. Mouth
-  drawMouth();
+// Execute one G-code line
+void executeLine(const char *line) {
+  int cmd = parseCommand(line);
+  if (cmd < 0) return;  // Skip comments and empty lines
+
+  float x, y, i, j;
+
+  switch (cmd) {
+    case 0:   // G0 — Rapid move (pen up)
+      x = parseParam(line, 'X', gcX);
+      y = parseParam(line, 'Y', gcY);
+      Serial.print(F("G0 ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
+      penUp();
+      gcMoveTo(x, y);
+      break;
+
+    case 10:  // G1 — Linear draw (pen down)
+      x = parseParam(line, 'X', gcX);
+      y = parseParam(line, 'Y', gcY);
+      Serial.print(F("G1 ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
+      penDown();
+      gcMoveTo(x, y);
+      break;
+
+    case 20:  // G2 — Clockwise arc
+      x = parseParam(line, 'X', gcX);
+      y = parseParam(line, 'Y', gcY);
+      i = parseParam(line, 'I', 0);
+      j = parseParam(line, 'J', 0);
+      Serial.print(F("G2 arc to ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
+      gcArc(x, y, i, j, false);
+      break;
+
+    case 30:  // G3 — Counter-clockwise arc
+      x = parseParam(line, 'X', gcX);
+      y = parseParam(line, 'Y', gcY);
+      i = parseParam(line, 'I', 0);
+      j = parseParam(line, 'J', 0);
+      Serial.print(F("G3 arc to ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
+      gcArc(x, y, i, j, true);
+      break;
+
+    case 1003: // M3 — Pen down
+      penDown();
+      break;
+
+    case 1005: // M5 — Pen up
+      penUp();
+      break;
+  }
+}
+
+// ============================================================
+//  G-CODE PROGRAM RUNNER
+//
+//  Reads a PROGMEM string line by line and executes each.
+//  Uses a 64-byte buffer for one line at a time.
+// ============================================================
+
+void runGCodeProgram(const char *pgmStr) {
+  char buf[64];           // Line buffer
+  uint8_t bi = 0;         // Buffer index
+  uint16_t pi = 0;        // PROGMEM index
+
+  while (true) {
+    char c = pgm_read_byte(&pgmStr[pi++]);  // Read one char from flash
+
+    if (c == '\n' || c == '\0') {
+      buf[bi] = '\0';                 // Null-terminate
+      if (bi > 0) executeLine(buf);   // Execute non-empty lines
+      bi = 0;                         // Reset buffer
+      if (c == '\0') break;           // End of program
+    } else {
+      if (bi < 63) buf[bi++] = c;     // Buffer character (overflow safe)
+    }
+  }
 }
 
 // ============================================================
 //  ENCODER AUTO-CALIBRATION
+//
+//  Spins each motor FORWARD briefly, checks if encoder counts
+//  go up or down. If down, flips polarity for that motor.
+//  This fixes reversed encoder wiring automatically.
 // ============================================================
 
 void calibrateEncoders() {
@@ -354,12 +638,12 @@ void calibrateEncoders() {
   for (uint8_t i = 0; i < 3; i++) {
     noInterrupts(); int before = posi[i]; interrupts();
 
-    motors[i]->setSpeed(180);
+    motors[i]->setSpeed(180);     // ~70% power
     motors[i]->run(FORWARD);
-    delay(300);
+    delay(300);                   // Spin for 300ms
     motors[i]->run(RELEASE);
     motors[i]->setSpeed(0);
-    delay(100);
+    delay(100);                   // Coast to stop
 
     noInterrupts(); int after = posi[i]; interrupts();
     int delta = after - before;
@@ -375,57 +659,62 @@ void calibrateEncoders() {
 }
 
 // ============================================================
-//  SETUP
+//  SETUP — runs once on power-on/reset
 // ============================================================
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("\n=== Smiley Face Robot ==="));
+  Serial.println(F("\n=== Omni G-code Plotter ==="));
 
+  // Pre-compute wheel angle trig (used in kinematics)
   for (uint8_t i = 0; i < 3; i++) {
     sinW[i] = sinf(W_ANG[i]);
     cosW[i] = cosf(W_ANG[i]);
   }
 
+  // Initialize motor shield
   if (!AFMS.begin()) {
     Serial.println(F("Motor Shield not found!"));
     while (1);
   }
   stopAll();
 
+  // Initialize pen servo
   penServo.attach(SERVO_PIN);
   penUp();
 
-  // Encoder pins
-  pinMode(ENC1_A, INPUT);
-  pinMode(ENC1_B, INPUT);
-  pinMode(ENC2_A, INPUT);
-  pinMode(ENC2_B, INPUT);
-  pinMode(ENC3_A, INPUT);
-  pinMode(ENC3_B, INPUT);
+  // Configure encoder pins
+  pinMode(ENC1_A, INPUT); pinMode(ENC1_B, INPUT);
+  pinMode(ENC2_A, INPUT); pinMode(ENC2_B, INPUT);
+  pinMode(ENC3_A, INPUT); pinMode(ENC3_B, INPUT);
 
+  // Attach encoder interrupts
   attachInterrupt(digitalPinToInterrupt(ENC1_A), enc1ISR, RISING);
   attachInterrupt(digitalPinToInterrupt(ENC2_A), enc2ISR, RISING);
   enc3PrevA = digitalRead(ENC3_A);
-  PCICR  |= (1 << PCIE0);
-  PCMSK0 |= (1 << PCINT0);
+  PCICR  |= (1 << PCIE0);     // Enable pin-change interrupt for port B
+  PCMSK0 |= (1 << PCINT0);    // Enable pin 8 specifically
 
+  // Calibrate encoders
   calibrateEncoders();
 
-  // Button
+  // Wait for button press (button wired to GND, pin pulled HIGH internally)
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   Serial.println(F("Press button to start..."));
-  while (digitalRead(BUTTON_PIN) == HIGH) {
-    delay(10);
-  }
-  delay(200);  // debounce
+  while (digitalRead(BUTTON_PIN) == HIGH) { delay(10); }
+  delay(200);  // Debounce
   Serial.println(F("GO!"));
 
-  // Draw!
-  drawSmiley();
+  // Reset G-code state and run the program
+  gcX = 0; gcY = 0;
+  runGCodeProgram(gcode_program);
 
+  // Done
   stopAll();
+  penUp();
   Serial.println(F("\nDone! Reset to repeat."));
 }
 
+// Nothing in loop — drawing runs once from setup.
+// Press Arduino reset button to draw again.
 void loop() { }

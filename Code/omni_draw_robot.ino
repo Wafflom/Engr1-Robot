@@ -53,11 +53,12 @@ Servo penServo;
 #define WHEEL_DIA_MM  36.0f
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
-// ---- PID GAINS (following curiores tutorial pattern) ----
-// Position PID: kp + kd, no ki (same as tutorial part4)
-float kp = 1.0;
-float kd = 0.025;
-float ki = 0.0;
+// ---- PID GAINS ----
+// Tutorial uses kp=1 on tick counts (~6.2 ticks/mm), so we scale up
+// ki builds up when stuck to push through motor stiction
+float kp = 8.0;
+float kd = 0.15;
+float ki = 2.0;
 
 #define MOVE_TIMEOUT_MS 8000UL
 #define POS_TOL_MM      1.0f

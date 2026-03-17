@@ -82,22 +82,19 @@ Servo penServo;                             // Pen lift servo
 // ki: integral — builds up when stuck to push through friction
 
 // Travel PID (G0): pen up, gentle cruise
-float kp_travel = 20.0;
-float kd_travel = 0.5;
-float ki_travel = 1.0;
+float kp_travel = 40.0;
+float kd_travel = 10.0;
+float ki_travel = 0.0;
 
 // Straight-line PID (G1): pen down, accuracy matters
-float kp_line = 30.0;
-float kd_line = 0.5;
-float ki_line = 1.0;
+float kp_line = 10.0;
+float kd_line = 0.0;
+float ki_line = 0.0;
 
 // Curve PID (arc segments): aggressive to push through small segments
-float kp_curve = 30.0;
-float kd_curve = 0.5;
-float ki_curve = 1.0;
-
-// PWM minimum (to overcome min reuired power to actually move)
-int minPWM = 50;     // Minimum PWM to overcome motor dead zone (adjustable)
+float kp_curve = 60.0;
+float kd_curve = 5.0;
+float ki_curve = 15.0;
 
 // Active PID gains (set before each move)
 float kp, kd, ki;
@@ -105,11 +102,9 @@ float kp, kd, ki;
 // -- Movement parameters --
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
-#define SPEED             255      // Full PWM for open-loop circle drawing
 
 // -- Arc parameters --
 #define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
-#define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
 
 // ============================================================
 //  WHEEL GEOMETRY
@@ -154,14 +149,6 @@ float eintegralY = 0;      // Accumulated Y error (integral term)
 float posX = 0.0f;                    // X position since last reset (mm)
 float posY = 0.0f;                    // Y position since last reset (mm)
 int posPrev[3] = {0, 0, 0};           // Previous encoder snapshots
-
-// ============================================================
-//  PATH LENGTH STATE (used for circle drawing)
-// ============================================================
-
-float pathLen = 0.0f;                  // Distance traveled since last reset
-float prevPathX = 0.0f;               // Previous position for distance calc
-float prevPathY = 0.0f;
 
 // ============================================================
 //  G-CODE INTERPRETER STATE
@@ -251,19 +238,6 @@ void resetOdometry() {
   posX = 0.0f; posY = 0.0f;
 }
 
-// Reset path length counter (for measuring circle circumference)
-void resetPathLength() {
-  pathLen = 0.0f;
-  prevPathX = posX; prevPathY = posY;
-}
-
-// Add distance traveled since last call to path length
-void updatePathLength() {
-  float dx = posX - prevPathX;
-  float dy = posY - prevPathY;
-  pathLen += sqrtf(dx * dx + dy * dy);
-  prevPathX = posX; prevPathY = posY;
-}
 
 // ============================================================
 //  MOTOR CONTROL
@@ -332,19 +306,6 @@ void applyWheelSpeeds(float *w) {
     if (pwr < 5) dir = 0;            // Too small = release
     setMotor(motors[i], dir, pwr);
   }
-}
-
-// Drive at full speed in direction (vx, vy) — used for open-loop circles
-void driveVelocity(float vx, float vy) {
-  float w[3];
-  inverseKinematics(vx, vy, w);
-  // Normalize so fastest wheel runs at SPEED (full power for circles)
-  float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
-  if (peak > 0.001f) {
-    float s = (float)SPEED / peak;
-    w[0] *= s; w[1] *= s; w[2] *= s;
-  }
-  applyWheelSpeeds(w);
 }
 
 // ============================================================
@@ -528,47 +489,12 @@ void gcMoveTo(float absX, float absY) {
 }
 
 // ============================================================
-//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep)
-//
-//  For 360° arcs (endpoint == startpoint), we use open-loop
-//  velocity sweep instead of PID — it's much smoother.
-//  The robot drives tangent to the circle, and we track
-//  the angle using: theta = path_length / radius
-// ============================================================
-
-void gcFullCircle(float radius, bool ccw) {
-  Serial.print(F("Circle R=")); Serial.println(radius);
-
-  resetOdometry();
-  resetPathLength();
-
-  float theta = 0.0f;
-  unsigned long t0 = millis();
-
-  while (theta < 2.0f * PI) {
-    float vx = cosf(theta);
-    float vy = ccw ? sinf(theta) : -sinf(theta);
-    driveVelocity(vx, vy);
-    delay(1);
-
-    updateOdometry();
-    updatePathLength();
-    theta = pathLen / radius;  // angle = arc_length / radius
-
-    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
-      Serial.println(F("circle timeout"));
-      break;
-    }
-  }
-  stopAll();
-}
-
-// ============================================================
 //  G-CODE EXECUTION: ARC (G2/G3)
 //
-//  Handles both full circles and partial arcs.
-//  Full circle: detected when endpoint ≈ startpoint → velocity sweep
-//  Partial arc: subdivided into line segments → PID to each
+//  All arcs (including full circles) are subdivided into small
+//  line segments and PID-moved to each point. This is how real
+//  CNC controllers handle arcs — linear interpolation with
+//  closed-loop position feedback on every segment.
 //
 //  Parameters:
 //    endX, endY — arc endpoint (absolute)
@@ -582,14 +508,7 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   float cy = gcY + cj;
   float radius = sqrtf(ci * ci + cj * cj);
 
-  // Full circle check (endpoint ≈ startpoint)
-  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
-    penDown();
-    gcFullCircle(radius, ccw);
-    return;
-  }
-
-  // Partial arc — calculate start and end angles
+  // Calculate start and end angles
   float startAng = atan2f(gcY - cy, gcX - cx);
   float endAng   = atan2f(endY - cy, endX - cx);
 
@@ -601,6 +520,11 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   } else {
     sweep = startAng - endAng;
     if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CW
+  }
+
+  // Full circle: endpoint ≈ startpoint means sweep the full 360°
+  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
+    sweep = 2.0f * PI;
   }
 
   // Subdivide arc into line segments

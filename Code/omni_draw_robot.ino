@@ -102,13 +102,12 @@ float kp, kd, ki;
 // -- Movement parameters --
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
-#define SPEED             255      // Full PWM for open-loop circle drawing
 
 // -- Arc parameters --
-#define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
-#define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
-#define CIRCLE_RAMP_RAD   0.5f    // How far from end to start decelerating (~30°)
-#define CIRCLE_MIN_SPD    80      // Slowest speed during deceleration ramp
+#define ARC_TIMEOUT_MS    20000UL  // Max time for any arc (ms)
+#define ARC_RAMP_RAD      0.5f    // Deceleration zone near end (~30°, adjustable)
+int arcMinSpd = 80;                // Slowest speed at end of ramp (adjustable)
+int arcCruiseSpd = 255;            // Full-speed cruise for long arcs (adjustable)
 
 // ============================================================
 //  WHEEL GEOMETRY
@@ -467,25 +466,6 @@ void penDown() {
 #define COS30 0.8660254f
 #define SIN30 0.5f
 
-// Low-level direct move helper (does NOT split into 2-wheel directions)
-// Used by arc segments where moves are small enough (~10mm) that
-// rotation is minimal, and splitting would make arcs jagged
-void gcMoveToRaw(float absX, float absY) {
-  float dx = absX - gcX;
-  float dy = absY - gcY;
-
-  // Skip tiny moves (less than 0.5mm)
-  if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f) {
-    gcX = absX; gcY = absY;
-    return;
-  }
-
-  useCurvePID();
-  resetOdometry();
-  moveTo(dx, dy);
-  gcX = absX; gcY = absY;
-}
-
 // 2-wheel decomposed move: 30° direction first, then pure Y
 // Both legs engage exactly 2 wheels symmetrically to prevent twisting
 void gcMoveTo(float absX, float absY) {
@@ -527,37 +507,60 @@ void gcMoveTo(float absX, float absY) {
 }
 
 // ============================================================
-//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep with decel ramp)
+//  G-CODE EXECUTION: SMOOTH ARC (velocity sweep)
 //
-//  For 360° arcs (endpoint == startpoint), we use open-loop
-//  velocity sweep — it's much smoother than PID segments.
-//  The robot drives tangent to the circle, tracking angle via
-//  theta = path_length / radius. Speed ramps down near the end
-//  to prevent overshoot from momentum.
+//  Unified smooth arc traversal for ALL arcs — full circles,
+//  partial arcs, even short ones like a smile.
+//
+//  Drives tangent to the arc continuously (no start-stop segments).
+//  Tracks progress via: theta = path_length / radius
+//  Speed ramps down near the end to prevent overshoot.
+//
+//  KEY FIX: Uses the actual starting angle on the circle to
+//  compute the correct tangent direction. Previously it always
+//  started driving rightward (+X) regardless of where on the
+//  circle the robot was, which squashed the shape.
+//
+//  Tangent math:
+//    Position on circle at angle α: (cx + r·cos(α), cy + r·sin(α))
+//    CCW tangent at α: (-sin(α), cos(α))
+//    CW  tangent at α: (sin(α), -cos(α))
 // ============================================================
 
-void gcFullCircle(float radius, bool ccw) {
-  Serial.print(F("Circle R=")); Serial.println(radius);
-
+void gcSmoothArc(float radius, float startAng, float sweep, bool ccw) {
   resetOdometry();
   resetPathLength();
+
+  // Scale cruise speed for short arcs — don't blast full speed
+  // on a tiny 20mm smile arc. Linear scale below 80mm arc length.
+  float arcLen = radius * sweep;
+  int cruise = arcCruiseSpd;
+  if (arcLen < 80.0f) {
+    cruise = arcMinSpd + (int)((arcCruiseSpd - arcMinSpd) * (arcLen / 80.0f));
+  }
 
   float theta = 0.0f;
   unsigned long t0 = millis();
 
-  while (theta < 2.0f * PI) {
-    // Ramp speed down over the last CIRCLE_RAMP_RAD radians
-    float remaining = 2.0f * PI - theta;
+  while (theta < sweep) {
+    // Deceleration ramp near the end
+    float remaining = sweep - theta;
     int spd;
-    if (remaining < CIRCLE_RAMP_RAD) {
-      float frac = remaining / CIRCLE_RAMP_RAD;  // 1.0 → 0.0
-      spd = CIRCLE_MIN_SPD + (int)((SPEED - CIRCLE_MIN_SPD) * frac);
+    if (remaining < ARC_RAMP_RAD) {
+      float frac = remaining / ARC_RAMP_RAD;  // 1.0 → 0.0
+      spd = arcMinSpd + (int)((cruise - arcMinSpd) * frac);
     } else {
-      spd = SPEED;
+      spd = cruise;
     }
 
-    float vx = cosf(theta);
-    float vy = ccw ? sinf(theta) : -sinf(theta);
+    // Current angle on the circle
+    float ang = ccw ? (startAng + theta) : (startAng - theta);
+
+    // Tangent direction (perpendicular to radius, in direction of travel)
+    float vx, vy;
+    if (ccw) { vx = -sinf(ang); vy =  cosf(ang); }  // CCW tangent
+    else     { vx =  sinf(ang); vy = -cosf(ang); }   // CW tangent
+
     driveVelocity(vx, vy, spd);
     delay(1);
 
@@ -565,8 +568,8 @@ void gcFullCircle(float radius, bool ccw) {
     updatePathLength();
     theta = pathLen / radius;  // angle = arc_length / radius
 
-    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
-      Serial.println(F("circle timeout"));
+    if (millis() - t0 > ARC_TIMEOUT_MS) {
+      Serial.println(F("arc timeout"));
       break;
     }
   }
@@ -576,9 +579,9 @@ void gcFullCircle(float radius, bool ccw) {
 // ============================================================
 //  G-CODE EXECUTION: ARC (G2/G3)
 //
-//  Handles both full circles and partial arcs.
-//  Full circle: detected when endpoint ≈ startpoint → velocity sweep
-//  Partial arc: subdivided into line segments → PID to each
+//  All arcs use smooth velocity sweep — full circles, partial
+//  arcs, and short arcs like smiles all get the same smooth
+//  continuous treatment.
 //
 //  Parameters:
 //    endX, endY — arc endpoint (absolute)
@@ -592,44 +595,32 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   float cy = gcY + cj;
   float radius = sqrtf(ci * ci + cj * cj);
 
-  // Full circle check (endpoint ≈ startpoint) → use smooth velocity sweep
-  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
-    penDown();
-    gcFullCircle(radius, ccw);
-    return;
-  }
-
-  // Partial arc — calculate start and end angles
+  // Starting angle (from center to current position)
   float startAng = atan2f(gcY - cy, gcX - cx);
-  float endAng   = atan2f(endY - cy, endX - cx);
 
   // Calculate sweep angle
   float sweep;
-  if (ccw) {
-    sweep = endAng - startAng;
-    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CCW
+  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
+    // Full circle (endpoint ≈ startpoint)
+    sweep = 2.0f * PI;
   } else {
-    sweep = startAng - endAng;
-    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CW
+    // Partial arc
+    float endAng = atan2f(endY - cy, endX - cx);
+    if (ccw) {
+      sweep = endAng - startAng;
+      if (sweep <= 0) sweep += 2.0f * PI;
+    } else {
+      sweep = startAng - endAng;
+      if (sweep <= 0) sweep += 2.0f * PI;
+    }
   }
 
-  // Subdivide arc into line segments
-  float arcLen = radius * sweep;
-  int numSegs = (int)(arcLen / ARC_SEG_MM);
-  if (numSegs < 4) numSegs = 4;  // Minimum 4 segments
+  Serial.print(F("Arc R=")); Serial.print(radius);
+  Serial.print(F(" sweep=")); Serial.println(sweep * 180.0f / PI);
 
   penDown();
-
-  // Move through each segment point on the arc
-  for (int s = 1; s <= numSegs; s++) {
-    float frac = (float)s / (float)numSegs;
-    float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
-    float px = cx + radius * cosf(ang);
-    float py = cy + radius * sinf(ang);
-    gcMoveToRaw(px, py);
-  }
-
-  gcMoveToRaw(endX, endY);  // Ensure we end exactly at the target
+  gcSmoothArc(radius, startAng, sweep, ccw);
+  gcX = endX; gcY = endY;
 }
 
 // ============================================================

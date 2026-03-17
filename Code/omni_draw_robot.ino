@@ -102,9 +102,13 @@ float kp, kd, ki;
 // -- Movement parameters --
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
+#define SPEED             255      // Full PWM for open-loop circle drawing
 
 // -- Arc parameters --
 #define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
+#define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
+#define CIRCLE_RAMP_RAD   0.5f    // How far from end to start decelerating (~30°)
+#define CIRCLE_MIN_SPD    80      // Slowest speed during deceleration ramp
 
 // ============================================================
 //  WHEEL GEOMETRY
@@ -149,6 +153,14 @@ float eintegralY = 0;      // Accumulated Y error (integral term)
 float posX = 0.0f;                    // X position since last reset (mm)
 float posY = 0.0f;                    // Y position since last reset (mm)
 int posPrev[3] = {0, 0, 0};           // Previous encoder snapshots
+
+// ============================================================
+//  PATH LENGTH STATE (used for circle drawing)
+// ============================================================
+
+float pathLen = 0.0f;                  // Distance traveled since last reset
+float prevPathX = 0.0f;               // Previous position for distance calc
+float prevPathY = 0.0f;
 
 // ============================================================
 //  G-CODE INTERPRETER STATE
@@ -238,6 +250,19 @@ void resetOdometry() {
   posX = 0.0f; posY = 0.0f;
 }
 
+// Reset path length counter (for measuring circle circumference)
+void resetPathLength() {
+  pathLen = 0.0f;
+  prevPathX = posX; prevPathY = posY;
+}
+
+// Add distance traveled since last call to path length
+void updatePathLength() {
+  float dx = posX - prevPathX;
+  float dy = posY - prevPathY;
+  pathLen += sqrtf(dx * dx + dy * dy);
+  prevPathX = posX; prevPathY = posY;
+}
 
 // ============================================================
 //  MOTOR CONTROL
@@ -309,6 +334,18 @@ void applyWheelSpeeds(float *w) {
   }
 }
 
+// Drive in direction (vx, vy) at given speed — used for open-loop circles
+void driveVelocity(float vx, float vy, int spd) {
+  float w[3];
+  inverseKinematics(vx, vy, w);
+  float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
+  if (peak > 0.001f) {
+    float s = (float)spd / peak;
+    w[0] *= s; w[1] *= s; w[2] *= s;
+  }
+  applyWheelSpeeds(w);
+}
+
 // ============================================================
 //  PID POSITION CONTROLLER
 //
@@ -324,10 +361,7 @@ void applyWheelSpeeds(float *w) {
 //    output = kp*error + kd*derivative + ki*integral
 // ============================================================
 
-// tolerance: how close to target before exiting (mm)
-// stopOnArrival: true = stop motors on arrival (endpoints),
-//                false = keep motors running (mid-arc waypoints)
-void moveTo(float targetX, float targetY, float tolerance, bool stopOnArrival) {
+void moveTo(float targetX, float targetY) {
   // Reset PID state for this new move
   eprevX = 0; eprevY = 0;
   eintegralX = 0; eintegralY = 0;
@@ -349,10 +383,7 @@ void moveTo(float targetX, float targetY, float tolerance, bool stopOnArrival) {
     float dist = sqrtf(eX * eX + eY * eY);
 
     // Arrived?
-    if (dist < tolerance) {
-      if (stopOnArrival) stopAll();
-      break;
-    }
+    if (dist < POS_TOL_MM) { stopAll(); break; }
 
     // Timeout?
     if (millis() >= deadline) {
@@ -381,11 +412,6 @@ void moveTo(float targetX, float targetY, float tolerance, bool stopOnArrival) {
     // Save error for next derivative
     eprevX = eX; eprevY = eY;
   }
-}
-
-// Convenience: stop precisely at target (used by G0/G1 moves)
-void moveTo(float targetX, float targetY) {
-  moveTo(targetX, targetY, POS_TOL_MM, true);
 }
 
 // ============================================================
@@ -441,18 +467,10 @@ void penDown() {
 #define COS30 0.8660254f
 #define SIN30 0.5f
 
-// Pass-through tolerance for chained arc segments (mm)
-// Intermediate waypoints exit early at this distance — the robot
-// doesn't slow down, it just moves on to the next waypoint.
-// Larger = smoother but less accurate. Smaller = more accurate but jerkier.
-float arcChainTol = 7.0f;   // adjustable — try 5-10mm
-
 // Low-level direct move helper (does NOT split into 2-wheel directions)
 // Used by arc segments where moves are small enough (~10mm) that
-// rotation is minimal, and splitting would make arcs jagged.
-// chain=true: pass-through waypoint (loose tolerance, don't stop)
-// chain=false: final endpoint (tight tolerance, full stop)
-void gcMoveToRaw(float absX, float absY, bool chain) {
+// rotation is minimal, and splitting would make arcs jagged
+void gcMoveToRaw(float absX, float absY) {
   float dx = absX - gcX;
   float dy = absY - gcY;
 
@@ -464,18 +482,8 @@ void gcMoveToRaw(float absX, float absY, bool chain) {
 
   useCurvePID();
   resetOdometry();
-  if (chain) {
-    // Pass through — loose tolerance, don't stop motors
-    moveTo(dx, dy, arcChainTol, false);
-    // Update gcX/gcY to actual position (not ideal target)
-    // so the next segment aims from where we really are
-    gcX += posX;
-    gcY += posY;
-  } else {
-    // Final point — tight tolerance, full stop
-    moveTo(dx, dy, POS_TOL_MM, true);
-    gcX = absX; gcY = absY;
-  }
+  moveTo(dx, dy);
+  gcX = absX; gcY = absY;
 }
 
 // 2-wheel decomposed move: 30° direction first, then pure Y
@@ -519,12 +527,58 @@ void gcMoveTo(float absX, float absY) {
 }
 
 // ============================================================
+//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep with decel ramp)
+//
+//  For 360° arcs (endpoint == startpoint), we use open-loop
+//  velocity sweep — it's much smoother than PID segments.
+//  The robot drives tangent to the circle, tracking angle via
+//  theta = path_length / radius. Speed ramps down near the end
+//  to prevent overshoot from momentum.
+// ============================================================
+
+void gcFullCircle(float radius, bool ccw) {
+  Serial.print(F("Circle R=")); Serial.println(radius);
+
+  resetOdometry();
+  resetPathLength();
+
+  float theta = 0.0f;
+  unsigned long t0 = millis();
+
+  while (theta < 2.0f * PI) {
+    // Ramp speed down over the last CIRCLE_RAMP_RAD radians
+    float remaining = 2.0f * PI - theta;
+    int spd;
+    if (remaining < CIRCLE_RAMP_RAD) {
+      float frac = remaining / CIRCLE_RAMP_RAD;  // 1.0 → 0.0
+      spd = CIRCLE_MIN_SPD + (int)((SPEED - CIRCLE_MIN_SPD) * frac);
+    } else {
+      spd = SPEED;
+    }
+
+    float vx = cosf(theta);
+    float vy = ccw ? sinf(theta) : -sinf(theta);
+    driveVelocity(vx, vy, spd);
+    delay(1);
+
+    updateOdometry();
+    updatePathLength();
+    theta = pathLen / radius;  // angle = arc_length / radius
+
+    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
+      Serial.println(F("circle timeout"));
+      break;
+    }
+  }
+  stopAll();
+}
+
+// ============================================================
 //  G-CODE EXECUTION: ARC (G2/G3)
 //
-//  All arcs (including full circles) are subdivided into small
-//  line segments and PID-moved to each point. This is how real
-//  CNC controllers handle arcs — linear interpolation with
-//  closed-loop position feedback on every segment.
+//  Handles both full circles and partial arcs.
+//  Full circle: detected when endpoint ≈ startpoint → velocity sweep
+//  Partial arc: subdivided into line segments → PID to each
 //
 //  Parameters:
 //    endX, endY — arc endpoint (absolute)
@@ -538,7 +592,14 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   float cy = gcY + cj;
   float radius = sqrtf(ci * ci + cj * cj);
 
-  // Calculate start and end angles
+  // Full circle check (endpoint ≈ startpoint) → use smooth velocity sweep
+  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
+    penDown();
+    gcFullCircle(radius, ccw);
+    return;
+  }
+
+  // Partial arc — calculate start and end angles
   float startAng = atan2f(gcY - cy, gcX - cx);
   float endAng   = atan2f(endY - cy, endX - cx);
 
@@ -552,11 +613,6 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
     if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CW
   }
 
-  // Full circle: endpoint ≈ startpoint means sweep the full 360°
-  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
-    sweep = 2.0f * PI;
-  }
-
   // Subdivide arc into line segments
   float arcLen = radius * sweep;
   int numSegs = (int)(arcLen / ARC_SEG_MM);
@@ -565,19 +621,15 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   penDown();
 
   // Move through each segment point on the arc
-  // Intermediate segments use motion chaining (loose tolerance, no stop)
-  // so the robot flows smoothly through waypoints instead of start-stop.
-  // Only the final segment stops precisely.
   for (int s = 1; s <= numSegs; s++) {
     float frac = (float)s / (float)numSegs;
     float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
     float px = cx + radius * cosf(ang);
     float py = cy + radius * sinf(ang);
-    bool isLast = (s == numSegs);
-    gcMoveToRaw(px, py, !isLast);  // chain=true for intermediate, false for last
+    gcMoveToRaw(px, py);
   }
 
-  gcMoveToRaw(endX, endY, false);  // Ensure we end exactly at the target
+  gcMoveToRaw(endX, endY);  // Ensure we end exactly at the target
 }
 
 // ============================================================

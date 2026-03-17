@@ -67,11 +67,13 @@ All tunable values are near the top of `omni_draw_robot.ino`:
 
 ### PID Gains
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `kp` | 40.0 | Proportional — main correction force toward target |
-| `kd` | 0.5 | Derivative — damping to prevent overshoot |
-| `ki` | 10.0 | Integral — builds up to push through motor friction |
+Three separate PID gain sets are used for different move types:
+
+| Gain Set | kp | kd | ki | Used For |
+|----------|-----|------|------|----------|
+| Travel | 20.0 | 0.5 | 1.0 | G0 rapid moves (pen up) |
+| Line | 30.0 | 0.5 | 1.0 | G1 straight draws (pen down) |
+| Curve | 30.0 | 0.5 | 1.0 | Arc segment sub-moves |
 
 ### Movement
 
@@ -81,6 +83,8 @@ All tunable values are near the top of `omni_draw_robot.ino`:
 | `MOVE_TIMEOUT_MS` | 8000 | Max time per move segment (ms) |
 | `ARC_SEG_MM` | 10.0 | Arc subdivision step size (mm) |
 | `CIRCLE_TIMEOUT_MS` | 20000 | Max time for a full circle (ms) |
+| `minPWM` | 50 | Minimum PWM to overcome motor dead zone |
+| `SPEED` | 255 | Full PWM for open-loop circle drawing |
 
 ---
 
@@ -93,13 +97,19 @@ All tunable values are near the top of `omni_draw_robot.ino`:
 - The interpreter tracks absolute position in `gcX`, `gcY`
 - Each move is converted to a relative PID move internally
 
-### Move Execution
+### Move Execution (2-Wheel Decomposition)
 
-For each G-code move:
-1. Calculate delta: `dx = targetX - gcX`, `dy = targetY - gcY`
-2. Reset odometry to (0, 0)
-3. Run PID controller to move `(dx, dy)` relative
-4. Update `gcX`, `gcY` to the new absolute position
+Diagonal moves cause the robot to rotate because it has no IMU to correct heading drift. To prevent this, each G0/G1 move is decomposed into two legs that each engage exactly 2 wheels symmetrically:
+
+1. **Leg 1 — 30° direction**: Covers all of dx (and some dy). Engages M1 + M3 equally, M2 idle.
+2. **Leg 2 — Pure Y**: Covers the remaining dy. Engages M2 + M3 equally, M1 idle.
+
+For each leg:
+1. Reset odometry to (0, 0)
+2. Run PID controller to move the delta relative
+3. Update `gcX`, `gcY` to the new absolute position
+
+Arc segments use direct diagonal moves (no decomposition) since the segments are small enough (~10mm) that rotation is minimal.
 
 ### Arc Handling
 
@@ -122,7 +132,7 @@ output = kp * error + kd * derivative + ki * integral
 - Uses `micros()` for precise timing
 - Runs as fast as possible (no fixed loop interval)
 - Motor power = `fabs(output)`, direction = `sign(output)`
-- No anti-windup, no deadband, no minimum PWM
+- Minimum PWM floor (`minPWM = 50`) to overcome motor dead zone — wheel speeds are scaled up so the slowest active wheel meets this threshold
 
 ### Tuning Guide
 

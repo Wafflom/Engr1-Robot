@@ -168,6 +168,21 @@ See [`Code/README.md`](Code/README.md) for firmware documentation, G-code refere
 
 The included `drawing.h` draws a **smiley face** — a 150mm radius circle with two eyes (vertical lines) and a smile (arc).
 
+### Swapping Drawings
+
+Alternative drawing files are included in the `Code/` directory:
+
+| File | Description | Size |
+|------|-------------|------|
+| `drawing.h` | Smiley face (active) | ~300mm |
+| `drawing_hello.h` | "HELLO" in block letters | ~190mm wide, 50mm tall |
+
+To use a different drawing, copy it over `drawing.h`:
+```bash
+cp Code/drawing_hello.h Code/drawing.h
+```
+Then re-upload to the Arduino.
+
 ---
 
 ## Creating Custom Drawings

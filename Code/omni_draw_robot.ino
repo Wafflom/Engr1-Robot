@@ -97,7 +97,7 @@ float kd_curve = 10.0;
 float ki_curve = 15.0;
 
 // minimum PWM
-int minPWM = 60; // minimum motor power to overcome friction and actually have motor move
+int minPWM = 80; // minimum motor power to overcome friction and actually have motor move
 
 // Active PID gains (set before each move)
 float kp, kd, ki;
@@ -281,7 +281,6 @@ void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
 void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 
 // Convert float wheel speeds to direction + PWM and send to motors
-int minPWM = 80; // minimum motor power to overcome friction and actually have motor move
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 

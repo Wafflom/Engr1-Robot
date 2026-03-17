@@ -104,9 +104,9 @@ float kp, kd, ki;
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
 
 // -- Arc parameters --
-#define ARC_SEG_MM        5.0f     // Arc segment length (mm) — smaller = smoother
+#define ARC_SEG_MM        3.0f     // Arc segment length (mm) — finer = smoother path
 #define ARC_TIMEOUT_MS    20000UL  // Max time for any arc (ms)
-float arcLookahead = 10.0f;        // Advance to next waypoint at this distance (mm, adjustable)
+float arcLookahead = 5.0f;         // Advance to next waypoint at this distance (mm, adjustable)
 float arcDecelDist = 20.0f;        // Start slowing down this far from end (mm, adjustable)
 
 // ============================================================
@@ -498,11 +498,11 @@ void gcSmoothArc(float cx, float cy, float radius,
   float arcLen = radius * sweep;
   int numSegs = (int)(arcLen / ARC_SEG_MM);
   if (numSegs < 4) numSegs = 4;
-  if (numSegs > 80) numSegs = 80;  // Cap for memory on Arduino
+  if (numSegs > 120) numSegs = 120;  // Cap for memory on Arduino
 
   // Waypoints stored as relative offsets from arc start position
   // (we reset odometry at start, so everything is relative)
-  float wpX[81], wpY[81];  // +1 for final point
+  float wpX[121], wpY[121];
   float arcStartX = cx + radius * cosf(startAng);
   float arcStartY = cy + radius * sinf(startAng);
 
@@ -512,7 +512,17 @@ void gcSmoothArc(float cx, float cy, float radius,
     wpX[s - 1] = (cx + radius * cosf(ang)) - arcStartX;
     wpY[s - 1] = (cy + radius * sinf(ang)) - arcStartY;
   }
-  int numWP = numSegs;  // Total waypoints
+  int numWP = numSegs;
+
+  // Precompute cumulative distance from each waypoint to the end
+  // so we don't do O(n) sqrt() every PID iteration (was causing stutter)
+  float cumDistToEnd[121];
+  cumDistToEnd[numWP - 1] = 0.0f;
+  for (int i = numWP - 2; i >= 0; i--) {
+    float dx = wpX[i + 1] - wpX[i];
+    float dy = wpY[i + 1] - wpY[i];
+    cumDistToEnd[i] = cumDistToEnd[i + 1] + sqrtf(dx * dx + dy * dy);
+  }
 
   // Reset odometry and PID for this arc
   resetOdometry();
@@ -522,7 +532,7 @@ void gcSmoothArc(float cx, float cy, float radius,
 
   useCurvePID();
 
-  int curWP = 0;  // Current target waypoint index
+  int curWP = 0;
   unsigned long deadline = millis() + ARC_TIMEOUT_MS;
 
   while (true) {
@@ -538,10 +548,10 @@ void gcSmoothArc(float cx, float cy, float radius,
     float eY = wpY[curWP] - posY;
     float dist = sqrtf(eX * eX + eY * eY);
 
-    // Advance waypoint when close enough (but not on the last one)
-    if (dist < arcLookahead && curWP < numWP - 1) {
+    // Advance through multiple waypoints if we've passed them
+    // (prevents backward-pointing error if robot is moving fast)
+    while (dist < arcLookahead && curWP < numWP - 1) {
       curWP++;
-      // Recalculate error to new target — DON'T reset PID state
       eX = wpX[curWP] - posX;
       eY = wpY[curWP] - posY;
       dist = sqrtf(eX * eX + eY * eY);
@@ -565,22 +575,18 @@ void gcSmoothArc(float cx, float cy, float radius,
     float dedtY = (eY - eprevY) / deltaT;
     eintegralX += eX * deltaT;
     eintegralY += eY * deltaT;
+    // Clamp integral to prevent windup
+    eintegralX = constrain(eintegralX, -50.0f, 50.0f);
+    eintegralY = constrain(eintegralY, -50.0f, 50.0f);
 
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
-    // Decelerate near the end of the arc
-    float distToEnd = 0;
-    for (int i = curWP; i < numWP - 1; i++) {
-      float dx = wpX[i + 1] - wpX[i];
-      float dy = wpY[i + 1] - wpY[i];
-      distToEnd += sqrtf(dx * dx + dy * dy);
-    }
-    distToEnd += dist;  // Add distance to current waypoint
-
+    // Decelerate near the end — O(1) lookup instead of O(n) loop
+    float distToEnd = cumDistToEnd[curWP] + dist;
     if (distToEnd < arcDecelDist) {
       float scale = distToEnd / arcDecelDist;  // 1.0 → 0.0
-      if (scale < 0.2f) scale = 0.2f;          // Don't go to zero
+      if (scale < 0.2f) scale = 0.2f;
       uX *= scale;
       uY *= scale;
     }

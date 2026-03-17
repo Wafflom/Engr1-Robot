@@ -54,14 +54,14 @@ Servo penServo;
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
 // ---- PID GAINS ----
-// Tutorial uses kp=1 on tick counts (~6.2 ticks/mm), so we scale up
-// ki builds up when stuck to push through motor stiction
-float kp = 8.0;
-float kd = 0.15;
-float ki = 2.0;
+// High kp so it arrives with momentum, kd to damp overshoot,
+// ki to push through if stalled
+float kp = 20.0;
+float kd = 0.4;
+float ki = 5.0;
 
 #define MOVE_TIMEOUT_MS 8000UL
-#define POS_TOL_MM      1.0f
+#define POS_TOL_MM      3.0f      // 3mm tolerance — stops before micro-correcting
 
 // ---- WHEEL GEOMETRY ----
 const float W_ANG[3] = {

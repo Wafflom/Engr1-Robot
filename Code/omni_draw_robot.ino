@@ -305,15 +305,20 @@ void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 
-  // Find the smallest active wheel speed to scale proportionally
-  float minActive = 999;
+  // Find the smallest and largest active wheel speeds
+  float minActive = 999, maxActive = 0;
   for (uint8_t i = 0; i < 3; i++) {
     float a = fabs(w[i]);
-    if (a >= 5 && a < minActive) minActive = a;
+    if (a >= 5) {
+      if (a < minActive) minActive = a;
+      if (a > maxActive) maxActive = a;
+    }
   }
-  // If any active wheel is below MIN_PWM, scale all wheels up to preserve direction
+  // Scale up so minimum active wheel hits MIN_PWM, but don't let max exceed 255
   if (minActive < MIN_PWM && minActive >= 5) {
-    float scale = (float)MIN_PWM / minActive;
+    float idealScale = (float)MIN_PWM / minActive;
+    float maxScale = 255.0f / maxActive;
+    float scale = min(idealScale, maxScale);
     for (uint8_t i = 0; i < 3; i++) w[i] *= scale;
   }
 

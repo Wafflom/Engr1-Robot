@@ -84,17 +84,17 @@ Servo penServo;                             // Pen lift servo
 // Travel PID (G0): pen up, gentle cruise
 float kp_travel = 20.0;
 float kd_travel = 0.5;
-float ki_travel = 5.0;
+float ki_travel = 1.0;
 
 // Straight-line PID (G1): pen down, accuracy matters
-float kp_line = 40.0;
-float kd_line = 0.1;
-float ki_line = 10.0;
+float kp_line = 30.0;
+float kd_line = 0.5;
+float ki_line = 1.0;
 
 // Curve PID (arc segments): aggressive to push through small segments
-float kp_curve = 80.0;
-float kd_curve = 1.5;
-float ki_curve = 20.0;
+float kp_curve = 30.0;
+float kd_curve = 0.5;
+float ki_curve = 1.0;
 
 // PWM minimum (to overcome min reuired power to actually move)
 int minPWM = 50;     // Minimum PWM to overcome motor dead zone (adjustable)

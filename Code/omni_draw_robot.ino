@@ -76,13 +76,28 @@ Servo penServo;                             // Pen lift servo
 #define WHEEL_DIA_MM  36.0f    // Wheel outer diameter (mm)
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)  // ~0.1616 mm/tick
 
-// -- PID gains --
+// -- PID gains (3 separate sets for different move types) --
 // kp: proportional — main correction force toward target
 // kd: derivative — braking to prevent overshoot
 // ki: integral — builds up when stuck to push through friction
-float kp = 40.0;   // High value because error is in mm (small numbers)
-float kd = 0.5;    // Moderate damping
-float ki = 10.0;   // Overcomes motor stiction
+
+// Travel PID (G0): pen up, just get there fast
+float kp_travel = 40.0;
+float kd_travel = 0.5;
+float ki_travel = 10.0;
+
+// Straight-line PID (G1): pen down, accuracy matters
+float kp_line = 30.0;
+float kd_line = 1.0;
+float ki_line = 8.0;
+
+// Curve PID (arc segments): small moves, gentle to avoid overshoot
+float kp_curve = 25.0;
+float kd_curve = 1.5;
+float ki_curve = 6.0;
+
+// Active PID gains (set before each move)
+float kp, kd, ki;
 
 // -- Movement parameters --
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
@@ -280,6 +295,11 @@ void inverseKinematics(float vx, float vy, float *w) {
     w[i] = -sinW[i] * vx + cosW[i] * vy;
 }
 
+// Select which PID gain set to use
+void useTravelPID()  { kp = kp_travel; kd = kd_travel; ki = ki_travel; }
+void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
+void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
+
 // Convert float wheel speeds to direction + PWM and send to motors
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
@@ -440,6 +460,7 @@ void gcMoveToRaw(float absX, float absY) {
     return;
   }
 
+  useCurvePID();  // Gentle gains for arc segments
   resetOdometry();
   moveTo(dx, dy);
   gcX = absX; gcY = absY;
@@ -626,6 +647,7 @@ void executeLine(const char *line) {
       y = parseParam(line, 'Y', gcY);
       Serial.print(F("G0 ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
       penUp();
+      useTravelPID();
       gcMoveTo(x, y);
       break;
 
@@ -634,6 +656,7 @@ void executeLine(const char *line) {
       y = parseParam(line, 'Y', gcY);
       Serial.print(F("G1 ")); Serial.print(x); Serial.print(F(",")); Serial.println(y);
       penDown();
+      useLinePID();
       gcMoveTo(x, y);
       break;
 
@@ -765,6 +788,13 @@ void setup() {
 
   // Calibrate encoders
   calibrateEncoders();
+
+  // Clear encoder counters so calibration ticks don't affect first move
+  noInterrupts();
+  posi[0] = 0; posi[1] = 0; posi[2] = 0;
+  interrupts();
+  posPrev[0] = 0; posPrev[1] = 0; posPrev[2] = 0;
+  posX = 0; posY = 0;
 
   // Configure start button (wired to GND, uses internal pullup)
   pinMode(BUTTON_PIN, INPUT_PULLUP);

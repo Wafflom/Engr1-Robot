@@ -40,17 +40,17 @@
 #define PEN_SETTLE_MS   300
 
 // ---- PER-WHEEL VELOCITY PID ----
-#define W_KP  0.4f
-#define W_KI  0.15f
-#define W_KD  0.02f
-#define W_INTEGRAL_CAP  500.0f
+#define W_KP  0.3f
+#define W_KI  0.1f
+#define W_KD  0.005f
+#define W_INTEGRAL_CAP  600.0f
+#define SPD_FILTER    0.3f      // EMA alpha for wheel speed (0–1, lower = smoother)
 
 // ---- MOTION PLANNER ----
-#define MAX_SPEED     150.0f    // mm/s cruising speed
 #define RAMP_GAIN     3.0f      // decel near target: speed = dist * RAMP_GAIN
-#define MIN_SPEED     20.0f     // mm/s minimum (prevents stall near target)
-#define POS_TOL       2.0f      // mm — close enough to stop
-#define LOOP_MS       10        // control loop period
+#define MIN_SPEED     15.0f     // mm/s minimum (prevents stall near target)
+#define POS_TOL       3.0f      // mm — close enough to stop
+#define LOOP_MS       20        // control loop period (ms)
 
 // ---- GLOBALS ----
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();
@@ -67,6 +67,7 @@ float posX = 0, posY = 0;
 // Per-wheel PID state
 float wIntg[3] = {0, 0, 0};
 float wPrevErr[3] = {0, 0, 0};
+float filtSpd[3] = {0, 0, 0};  // low-pass filtered wheel speed (ticks/s)
 
 unsigned long lastLoop = 0;
 
@@ -101,6 +102,7 @@ void stopAll() {
     setMotor(i, 0);
     wIntg[i] = 0;
     wPrevErr[i] = 0;
+    filtSpd[i] = 0;
   }
 }
 
@@ -118,7 +120,9 @@ void readEncoders(float dt, float wheelSpd[3]) {
     prevTicks[i] = snap[i];
     float signedDelta = (float)delta * encSign[i];
     dMM[i] = signedDelta * MM_PER_TICK;
-    wheelSpd[i] = signedDelta / dt;             // ticks/s
+    float rawSpd = signedDelta / dt;
+    filtSpd[i] += SPD_FILTER * (rawSpd - filtSpd[i]);  // EMA low-pass
+    wheelSpd[i] = filtSpd[i];
   }
 
   // Forward kinematics: wheel displacements → robot displacement
@@ -193,8 +197,8 @@ void moveTo(float tx, float ty) {
       return;
     }
 
-    // 3. Desired robot velocity — direction × speed
-    float speed = constrain(dist * RAMP_GAIN, MIN_SPEED, MAX_SPEED);
+    // 3. Desired robot velocity — direction × speed (no cap, PID saturates at 255)
+    float speed = max(MIN_SPEED, dist * RAMP_GAIN);
     float vx = (ex / dist) * speed;     // mm/s
     float vy = (ey / dist) * speed;
 

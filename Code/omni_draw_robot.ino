@@ -793,6 +793,8 @@ void setup() {
 
   // Initialize pen servo
   penServo.attach(SERVO_PIN);
+  penDown();
+  delay(100); 
   penUp();
 
   // Configure encoder pins

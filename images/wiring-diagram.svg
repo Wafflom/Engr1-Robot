@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 780" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#999"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#8b7ec8"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#c0392b"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#6a9f4d"/>
+    </marker>
+    <marker id="arrow-brown" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#a0784a"/>
+    </marker>
+    <marker id="arrow-teal" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#5a9e8f"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#888"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1050" height="780" rx="12" fill="#2b2b2b"/>
+
+  <!-- ==================== ARDUINO UNO R3 (center) ==================== -->
+  <rect x="350" y="30" width="300" height="470" rx="10" fill="#2c5f9e"/>
+  <rect x="350" y="30" width="300" height="470" rx="10" fill="none" stroke="#3a7bd5" stroke-width="2"/>
+  <text x="500" y="62" text-anchor="middle" fill="#7ab8f5" font-size="20" font-weight="bold">Arduino Uno R3</text>
+
+  <!-- Reserved pins -->
+  <text x="500" y="95" text-anchor="middle" fill="#88776a" font-size="14">D0 RX (reserved)</text>
+  <text x="500" y="115" text-anchor="middle" fill="#88776a" font-size="14">D1 TX (reserved)</text>
+
+  <!-- Encoder pins -->
+  <text x="500" y="148" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D2 ENC1 Hall A</text>
+  <text x="500" y="172" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D3 ENC2 Hall A</text>
+  <text x="500" y="198" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D4 ENC1 Hall B</text>
+  <text x="500" y="222" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D5 ENC2 Hall B</text>
+  <text x="500" y="248" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D7 ENC3 Hall B</text>
+  <text x="500" y="272" text-anchor="middle" fill="#dfc070" font-size="15" font-weight="bold">D8 ENC3 Hall A</text>
+
+  <!-- Peripheral pins -->
+  <text x="500" y="312" text-anchor="middle" fill="#e0e0e0" font-size="15" font-weight="bold">Servo D10</text>
+  <text x="500" y="338" text-anchor="middle" fill="#e07070" font-size="15" font-weight="bold">Red LED D11</text>
+  <text x="500" y="362" text-anchor="middle" fill="#c0c0c0" font-size="15" font-weight="bold">Button D12</text>
+  <text x="500" y="388" text-anchor="middle" fill="#7ec87e" font-size="15" font-weight="bold">Grn LED D13</text>
+
+  <!-- I2C pins -->
+  <text x="500" y="425" text-anchor="middle" fill="#6aaa9a" font-size="13">A4 SDA (shield I2C)</text>
+  <text x="500" y="445" text-anchor="middle" fill="#6aaa9a" font-size="13">A5 SCL (shield I2C)</text>
+
+  <!-- Power pins -->
+  <text x="500" y="478" text-anchor="middle" fill="#e0e0e0" font-size="15" font-weight="bold">5V</text>
+  <text x="500" y="496" text-anchor="middle" fill="#e0e0e0" font-size="15" font-weight="bold">GND</text>
+
+  <!-- ==================== ENCODER 1 (left) ==================== -->
+  <rect x="30" y="60" width="220" height="125" rx="8" fill="#4a3f6b"/>
+  <rect x="30" y="60" width="220" height="125" rx="8" fill="none" stroke="#6b5f9e" stroke-width="1.5"/>
+  <text x="140" y="85" text-anchor="middle" fill="#c4b8f0" font-size="16" font-weight="bold">Encoder 1</text>
+  <text x="140" y="105" text-anchor="middle" fill="#a89ed0" font-size="13">Motor 1 / front</text>
+  <line x1="140" y1="110" x2="140" y2="112" stroke="#6b5f9e" stroke-width="0.5"/>
+  <text x="140" y="128" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall A → D2 (INT0)</text>
+  <text x="140" y="145" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall B → D4</text>
+  <text x="140" y="162" text-anchor="middle" fill="#d0c8f0" font-size="12">VCC → 5V, GND → GND</text>
+
+  <!-- ==================== ENCODER 2 (left) ==================== -->
+  <rect x="30" y="210" width="220" height="125" rx="8" fill="#4a3f6b"/>
+  <rect x="30" y="210" width="220" height="125" rx="8" fill="none" stroke="#6b5f9e" stroke-width="1.5"/>
+  <text x="140" y="235" text-anchor="middle" fill="#c4b8f0" font-size="16" font-weight="bold">Encoder 2</text>
+  <text x="140" y="255" text-anchor="middle" fill="#a89ed0" font-size="13">Motor 2 / rear-left</text>
+  <text x="140" y="278" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall A → D3 (INT1)</text>
+  <text x="140" y="295" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall B → D5</text>
+  <text x="140" y="312" text-anchor="middle" fill="#d0c8f0" font-size="12">VCC → 5V, GND → GND</text>
+
+  <!-- ==================== ENCODER 3 (left) ==================== -->
+  <rect x="30" y="360" width="220" height="125" rx="8" fill="#4a3f6b"/>
+  <rect x="30" y="360" width="220" height="125" rx="8" fill="none" stroke="#6b5f9e" stroke-width="1.5"/>
+  <text x="140" y="385" text-anchor="middle" fill="#c4b8f0" font-size="16" font-weight="bold">Encoder 3</text>
+  <text x="140" y="405" text-anchor="middle" fill="#a89ed0" font-size="13">Motor 3 / rear-right</text>
+  <text x="140" y="428" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall A → D8 (PCINT0)</text>
+  <text x="140" y="445" text-anchor="middle" fill="#d0c8f0" font-size="12">Hall B → D7</text>
+  <text x="140" y="462" text-anchor="middle" fill="#d0c8f0" font-size="12">VCC → 5V, GND → GND</text>
+
+  <!-- ==================== SG90 SERVO (right) ==================== -->
+  <rect x="750" y="100" width="200" height="65" rx="8" fill="#7a5a30"/>
+  <rect x="750" y="100" width="200" height="65" rx="8" fill="none" stroke="#a0784a" stroke-width="1.5"/>
+  <text x="850" y="125" text-anchor="middle" fill="#f0d8b0" font-size="16" font-weight="bold">SG90 Servo</text>
+  <text x="850" y="148" text-anchor="middle" fill="#d0b890" font-size="13">Shield Servo 1</text>
+
+  <!-- ==================== RED LED (right) ==================== -->
+  <rect x="750" y="195" width="200" height="50" rx="8" fill="#8b2020"/>
+  <rect x="750" y="195" width="200" height="50" rx="8" fill="none" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="850" y="226" text-anchor="middle" fill="#f0a0a0" font-size="15" font-weight="bold">Red LED + 220R</text>
+
+  <!-- ==================== BUTTON (right) ==================== -->
+  <rect x="750" y="275" width="200" height="50" rx="8" fill="#4a4a4a"/>
+  <rect x="750" y="275" width="200" height="50" rx="8" fill="none" stroke="#777" stroke-width="1.5"/>
+  <text x="850" y="305" text-anchor="middle" fill="#d0d0d0" font-size="15" font-weight="bold">Button → GND</text>
+
+  <!-- ==================== GREEN LED (right) ==================== -->
+  <rect x="750" y="355" width="200" height="50" rx="8" fill="#3a6a28"/>
+  <rect x="750" y="355" width="200" height="50" rx="8" fill="none" stroke="#6a9f4d" stroke-width="1.5"/>
+  <text x="850" y="386" text-anchor="middle" fill="#b0e8a0" font-size="15" font-weight="bold">Green LED + 220R</text>
+
+  <!-- ==================== MOTOR SHIELD V2 (bottom center) ==================== -->
+  <rect x="330" y="560" width="340" height="185" rx="10" fill="#2a6b5e"/>
+  <rect x="330" y="560" width="340" height="185" rx="10" fill="none" stroke="#4a9b8e" stroke-width="2"/>
+  <text x="500" y="590" text-anchor="middle" fill="#90e0d0" font-size="18" font-weight="bold">Motor Shield V2</text>
+  <text x="500" y="613" text-anchor="middle" fill="#70b8a8" font-size="13">I2C on A4/A5</text>
+  <line x1="370" y1="625" x2="630" y2="625" stroke="#4a9b8e" stroke-width="1"/>
+  <text x="500" y="653" text-anchor="middle" fill="#d0f0e8" font-size="15" font-weight="bold">M1 Motor 1 (front)</text>
+  <text x="500" y="680" text-anchor="middle" fill="#d0f0e8" font-size="15" font-weight="bold">M2 Motor 2 (rear-L)</text>
+  <text x="500" y="707" text-anchor="middle" fill="#d0f0e8" font-size="15" font-weight="bold">M3 Motor 3 (rear-R)</text>
+
+  <!-- ==================== 6V POWER SUPPLY (bottom left) ==================== -->
+  <rect x="60" y="610" width="190" height="65" rx="8" fill="#6b5a20"/>
+  <rect x="60" y="610" width="190" height="65" rx="8" fill="none" stroke="#a09030" stroke-width="1.5"/>
+  <text x="155" y="637" text-anchor="middle" fill="#f0e0a0" font-size="16" font-weight="bold">6V Power Supply</text>
+  <text x="155" y="658" text-anchor="middle" fill="#d0c080" font-size="13">Motor terminal</text>
+
+  <!-- ==================== WIRING ARROWS ==================== -->
+
+  <!-- Encoder 1 → Arduino -->
+  <line x1="250" y1="122" x2="348" y2="122" stroke="#8b7ec8" stroke-width="2" marker-end="url(#arrow-purple)"/>
+  <!-- Encoder 2 → Arduino -->
+  <line x1="250" y1="272" x2="348" y2="230" stroke="#8b7ec8" stroke-width="2" marker-end="url(#arrow-purple)"/>
+  <!-- Encoder 3 → Arduino -->
+  <line x1="250" y1="422" x2="348" y2="260" stroke="#8b7ec8" stroke-width="2" marker-end="url(#arrow-purple)"/>
+
+  <!-- Arduino → Servo -->
+  <line x1="652" y1="312" x2="748" y2="132" stroke="#a0784a" stroke-width="2" marker-end="url(#arrow-brown)"/>
+  <!-- Arduino → Red LED -->
+  <line x1="652" y1="338" x2="748" y2="220" stroke="#c0392b" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <!-- Arduino → Button -->
+  <line x1="652" y1="362" x2="748" y2="300" stroke="#888" stroke-width="2" marker-end="url(#arrow-gray)"/>
+  <!-- Arduino → Green LED -->
+  <line x1="652" y1="388" x2="748" y2="380" stroke="#6a9f4d" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+  <!-- Arduino → Motor Shield (dashed I2C) -->
+  <line x1="500" y1="502" x2="500" y2="558" stroke="#5a9e8f" stroke-width="2.5" stroke-dasharray="8,4" marker-end="url(#arrow-teal)"/>
+  <text x="530" y="536" fill="#5a9e8f" font-size="11">I2C</text>
+
+  <!-- 6V Power → Motor Shield -->
+  <line x1="252" y1="642" x2="328" y2="642" stroke="#a09030" stroke-width="2" marker-end="url(#arrow-brown)"/>
+</svg>

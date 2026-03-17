@@ -11,13 +11,12 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 - [Features](#features)
 - [Hardware Overview](#hardware-overview)
 - [Bill of Materials](#bill-of-materials)
-- [Pinout Diagram](#pinout-diagram)
-- [Wiring Reference](#wiring-reference)
+- [Wiring Diagram](#wiring-diagram)
+- [Wheel Layout](#wheel-layout)
 - [Assembly](#assembly)
 - [Software Setup](#software-setup)
 - [Usage](#usage)
 - [Serial Commands](#serial-commands)
-- [Project Structure](#project-structure)
 - [License](#license)
 
 ---
@@ -64,109 +63,19 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 
 ---
 
-## Pinout Diagram
+## Wiring Diagram
 
-```
-                        ARDUINO UNO R3
-                   ┌──────────────────────┐
-                   │          USB         │
-                   │       ┌──────┐       │
-                   │       └──────┘       │
-                   │                      │
-         (TX) D1  ─┤                      ├─  Vin
-         (RX) D0  ─┤                      ├─  GND
-              D2  ─┤■ Encoder 1 Hall A    ├─  GND
-              D3  ─┤■ Encoder 2 Hall A    ├─  5V
-              D4  ─┤■ Encoder 1 Hall B    ├─  3.3V
-              D5  ─┤■ Encoder 2 Hall B    ├─  RESET
-              D6  ─┤                      ├─  IOREF
-              D7  ─┤■ Encoder 3 Hall B    ├─
-              D8  ─┤■ Encoder 3 Hall A    ├─  A0
-              D9  ─┤                      ├─  A1
-             D10  ─┤■ Pen Servo (PWM)     ├─  A2
-             D11  ─┤■ Red LED             ├─  A3
-             D12  ─┤■ Start Button        ├─  A4 ■ SDA (Motor Shield)
-             D13  ─┤■ Green LED           ├─  A5 ■ SCL (Motor Shield)
-                   │                      │
-                   └──────────────────────┘
+Full system wiring showing all connections between the Arduino, encoders, Motor Shield, servo, LEDs, and button.
 
-            ■ = Pin in use
-
-  ┌──────────────────────────────────────────────────────────┐
-  │                  ADAFRUIT MOTOR SHIELD V2                │
-  │                  (stacked on Arduino Uno)                │
-  │                                                         │
-  │   Motor Terminals            Servo Headers              │
-  │  ┌────┐ ┌────┐ ┌────┐      ┌──────────┐               │
-  │  │ M1 │ │ M2 │ │ M3 │      │ Servo 1  │──→ Pin D10    │
-  │  │    │ │    │ │    │      │ (pen)    │               │
-  │  └─┬──┘ └─┬──┘ └─┬──┘      └──────────┘               │
-  │    │      │      │                                     │
-  │    │      │      │         Communication               │
-  │    │      │      │         I2C: SDA (A4), SCL (A5)     │
-  └────┼──────┼──────┼─────────────────────────────────────┘
-       │      │      │
-       ▼      ▼      ▼
-    Motor1  Motor2  Motor3
-   (front) (r-left)(r-right)
-```
-
-### Wheel Layout (Top-Down View)
-
-```
-                   Front
-                     │
-              Wheel 1 (M1)
-                  ●  90°
-                 /|\
-                / | \
-               /  |  \
-              /   |   \
-             /    |    \
-            /     |     \
-    Wheel 2 (M2)  │  Wheel 3 (M3)
-       ●  210°    │    330°  ●
-                  │
-            ← 60 mm →
-         (center to wheel)
-
-    All wheels angled for holonomic motion.
-    Robot can translate in any direction
-    without rotating.
-```
+![Wiring Diagram](images/wiring-diagram.svg)
 
 ---
 
-## Wiring Reference
+## Wheel Layout
 
-### Encoder Connections (per motor)
+Three omni-wheels at 120-degree intervals allow the robot to translate in any direction without rotating.
 
-Each N20 motor has 6 wires:
-
-| Wire | Function | Connection |
-|------|----------|------------|
-| 1 | Motor (+) | Motor Shield terminal (M1/M2/M3) |
-| 2 | Motor (-) | Motor Shield terminal (M1/M2/M3) |
-| 3 | Encoder VCC | Arduino 5V |
-| 4 | Encoder GND | Arduino GND |
-| 5 | Hall Sensor A | See pin table below |
-| 6 | Hall Sensor B | See pin table below |
-
-### Encoder Pin Assignments
-
-| Motor | Hall A Pin | Interrupt Type | Hall B Pin |
-|-------|-----------|----------------|------------|
-| Motor 1 (front) | D2 | Hardware INT0 | D4 |
-| Motor 2 (rear-left) | D3 | Hardware INT1 | D5 |
-| Motor 3 (rear-right) | D8 | Pin-change PCINT0 | D7 |
-
-### LED and Button Wiring
-
-```
-  D11 ──── [220Ω] ──── RED LED ──── GND     (drawing active)
-  D13 ──── [220Ω] ──── GREEN LED ── GND     (drawing complete)
-  D12 ──── BUTTON ──── GND                  (uses internal pullup)
-```
+![Wheel Layout](images/wheel-layout.svg)
 
 ---
 
@@ -204,6 +113,8 @@ General steps:
 3. Click **Upload**
 4. Open the Serial Monitor at **115200 baud** to see status messages
 
+See [`Code/README.md`](Code/README.md) for detailed firmware documentation, function-by-function breakdown, and how to create custom drawings.
+
 ---
 
 ## Usage
@@ -233,22 +144,6 @@ Connect at **115200 baud**. Available commands:
 | `PD` | Pen down (lower) |
 | `H` | Home — reset position to (0, 0) |
 | `?` | Print current position |
-
----
-
-## Project Structure
-
-```
-Engr1-Robot/
-├── README.md               ← You are here
-├── Code/
-│   ├── README.md           ← Detailed code documentation
-│   ├── omni_draw_robot.ino ← Main firmware (Arduino sketch)
-│   └── hello_drawing.h     ← Drawing coordinate data
-└── (CAD files coming soon)
-```
-
-See [`Code/README.md`](Code/README.md) for a full breakdown of the firmware architecture, functions, and how to create custom drawings.
 
 ---
 

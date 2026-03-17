@@ -1,20 +1,23 @@
 /*
- * Omni-Wheel Drawing Robot — 25cm Star
+ * Omni-Wheel Drawing Robot
+ *
+ * Three-wheel holonomic robot that draws shapes from coordinate data.
+ * Each wheel has its own velocity PID loop tracking encoder feedback.
+ * A motion planner computes desired wheel speeds from the position
+ * error, and the per-wheel PIDs drive each motor to match.
  *
  * Hardware:
  *   Arduino Uno R3 + Adafruit Motor Shield V2
- *   3x N20 motors with magnetic encoders (6V, 1:50)
+ *   3x N20 DC motors w/ magnetic encoders (6V, 1:50, 14 CPR)
  *   M1 = front (90°), M2 = rear-left (210°), M3 = rear-right (330°)
- *   SG90 servo on pin 10, button on pin 12
- *   Wheel diameter: 36mm, robot radius: 88mm
- *
- * On power-up: calibrates encoder directions automatically.
- * Press button to draw a 25cm radius star.
+ *   SG90 servo on pin 10, pushbutton on pin 12
+ *   Wheel diameter: 36mm, center-to-wheel: 88mm
  */
 
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
 #include <Servo.h>
+#include "drawing.h"
 
 // ---- PINS ----
 #define ENC1_A    2
@@ -27,9 +30,7 @@
 #define SERVO_PIN 10
 
 // ---- PHYSICAL ----
-// Encoder: 7 pole pairs = 14 edges per motor rev (CHANGE interrupt)
-// Gear ratio 1:50 → 14 * 50 = 700 ticks per wheel revolution
-#define ENCODER_CPR   700.0f
+#define ENCODER_CPR   700.0f    // 14 edges/motor-rev × 50:1 gear
 #define WHEEL_DIA_MM  36.0f
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
@@ -38,19 +39,18 @@
 #define PEN_DOWN_ANGLE  0
 #define PEN_SETTLE_MS   300
 
-// ---- PID ----
-#define KP  8.0f
-#define KI  1.0f
-#define KD  0.5f
+// ---- PER-WHEEL VELOCITY PID ----
+#define W_KP  0.4f
+#define W_KI  0.15f
+#define W_KD  0.02f
+#define W_INTEGRAL_CAP  500.0f
 
-// ---- MOTION ----
-#define LOOP_MS       10
-#define POS_TOL_MM    2.0f
-#define SPEED         255
-#define INTEGRAL_CAP  300.0f
-
-// ---- STAR ----
-#define STAR_RADIUS   250.0f   // 25cm
+// ---- MOTION PLANNER ----
+#define MAX_SPEED     150.0f    // mm/s cruising speed
+#define RAMP_GAIN     3.0f      // decel near target: speed = dist * RAMP_GAIN
+#define MIN_SPEED     20.0f     // mm/s minimum (prevents stall near target)
+#define POS_TOL       2.0f      // mm — close enough to stop
+#define LOOP_MS       10        // control loop period
 
 // ---- GLOBALS ----
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();
@@ -59,158 +59,169 @@ Servo penServo;
 
 volatile long encTicks[3] = {0, 0, 0};
 long prevTicks[3] = {0, 0, 0};
-int8_t encSign[3] = {1, 1, 1};   // corrected by calibration
+int8_t encSign[3] = {1, 1, 1};
+
 float sinW[3], cosW[3];
 float posX = 0, posY = 0;
-float tgtX = 0, tgtY = 0;
-bool hasTarget = false;
-float intgX = 0, intgY = 0;
-float peX = 0, peY = 0;
+
+// Per-wheel PID state
+float wIntg[3] = {0, 0, 0};
+float wPrevErr[3] = {0, 0, 0};
+
 unsigned long lastLoop = 0;
 
-// ---- ENCODER ISRs ----
-// CHANGE mode: fires on both rising AND falling edges of channel A.
-// Direction: if A==B → count up, if A!=B → count down.
-// Auto-calibration at startup corrects the sign if needed.
+// ============================================================
+//  ENCODER ISRs — CHANGE mode, 14 counts per motor revolution
+// ============================================================
 void isr1() { encTicks[0] += (digitalRead(ENC1_A) == digitalRead(ENC1_B)) ? 1 : -1; }
 void isr2() { encTicks[1] += (digitalRead(ENC2_A) == digitalRead(ENC2_B)) ? 1 : -1; }
-
-// Encoder 3: pin-change interrupt already fires on both edges.
 ISR(PCINT0_vect) {
   encTicks[2] += (digitalRead(ENC3_A) == digitalRead(ENC3_B)) ? 1 : -1;
 }
 
-// ---- MOTOR HELPERS ----
-void driveMotor(uint8_t idx, float pwm) {
-  if (fabsf(pwm) < 1) {
-    mot[idx]->setSpeed(0);
-    mot[idx]->run(RELEASE);
-    return;
+// ============================================================
+//  MOTOR OUTPUT — raw PWM, no tricks
+// ============================================================
+void setMotor(uint8_t i, int16_t pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) {
+    mot[i]->setSpeed(0);
+    mot[i]->run(RELEASE);
+  } else if (pwm > 0) {
+    mot[i]->setSpeed(pwm);
+    mot[i]->run(FORWARD);
+  } else {
+    mot[i]->setSpeed(-pwm);
+    mot[i]->run(BACKWARD);
   }
-  mot[idx]->setSpeed((uint8_t)min(fabsf(pwm), 255.0f));
-  mot[idx]->run(pwm > 0 ? FORWARD : BACKWARD);
 }
 
 void stopAll() {
   for (uint8_t i = 0; i < 3; i++) {
-    mot[i]->setSpeed(0);
-    mot[i]->run(RELEASE);
+    setMotor(i, 0);
+    wIntg[i] = 0;
+    wPrevErr[i] = 0;
   }
 }
 
-// ---- ODOMETRY ----
-// Reads encoders, applies sign correction, updates posX/posY.
-void updateOdometry() {
+// ============================================================
+//  ODOMETRY — read encoders, compute wheel speeds & position
+// ============================================================
+void readEncoders(float dt, float wheelSpd[3]) {
   noInterrupts();
   long snap[3] = { encTicks[0], encTicks[1], encTicks[2] };
   interrupts();
 
-  float d[3];
+  float dMM[3];
   for (uint8_t i = 0; i < 3; i++) {
-    d[i] = (float)(snap[i] - prevTicks[i]) * MM_PER_TICK * encSign[i];
+    long delta = snap[i] - prevTicks[i];
     prevTicks[i] = snap[i];
+    float signedDelta = (float)delta * encSign[i];
+    dMM[i] = signedDelta * MM_PER_TICK;
+    wheelSpd[i] = signedDelta / dt;             // ticks/s
   }
 
-  posX += (2.0f / 3.0f) * (-sinW[0]*d[0] - sinW[1]*d[1] - sinW[2]*d[2]);
-  posY += (2.0f / 3.0f) * ( cosW[0]*d[0] + cosW[1]*d[1] + cosW[2]*d[2]);
+  // Forward kinematics: wheel displacements → robot displacement
+  posX += (2.0f/3.0f) * (-sinW[0]*dMM[0] - sinW[1]*dMM[1] - sinW[2]*dMM[2]);
+  posY += (2.0f/3.0f) * ( cosW[0]*dMM[0] + cosW[1]*dMM[1] + cosW[2]*dMM[2]);
 }
 
-// ---- PID ----
-bool pidStep(float dt) {
-  if (!hasTarget) return true;
-
-  float ex = tgtX - posX;
-  float ey = tgtY - posY;
-  float dist = sqrtf(ex * ex + ey * ey);
-
-  if (dist < POS_TOL_MM) {
-    stopAll();
-    hasTarget = false;
-    intgX = intgY = peX = peY = 0;
-    return true;
-  }
-
-  intgX = constrain(intgX + ex * dt, -INTEGRAL_CAP, INTEGRAL_CAP);
-  intgY = constrain(intgY + ey * dt, -INTEGRAL_CAP, INTEGRAL_CAP);
-
-  float dErrX = (ex - peX) / dt;
-  float dErrY = (ey - peY) / dt;
-
-  float cx = KP * ex + KI * intgX + KD * dErrX;
-  float cy = KP * ey + KI * intgY + KD * dErrY;
-  peX = ex;
-  peY = ey;
-
-  // Inverse kinematics: velocity -> wheel speeds
-  float w[3];
-  for (uint8_t i = 0; i < 3; i++)
-    w[i] = -sinW[i] * cx + cosW[i] * cy;
-
-  // Normalize so peak wheel = SPEED (full power)
-  float pk = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
-  if (pk > 0.001f) {
-    float s = (float)SPEED / pk;
-    w[0] *= s; w[1] *= s; w[2] *= s;
-  }
-
-  driveMotor(0, w[0]);
-  driveMotor(1, w[1]);
-  driveMotor(2, w[2]);
-  return false;
+// ============================================================
+//  PER-WHEEL VELOCITY PID
+//  Input:  target speed (ticks/s), actual speed (ticks/s)
+//  Output: PWM value (-255 to 255)
+// ============================================================
+int16_t wheelPID(uint8_t i, float target, float actual, float dt) {
+  float err = target - actual;
+  wIntg[i] = constrain(wIntg[i] + err * dt, -W_INTEGRAL_CAP, W_INTEGRAL_CAP);
+  float deriv = (err - wPrevErr[i]) / dt;
+  wPrevErr[i] = err;
+  float out = W_KP * err + W_KI * wIntg[i] + W_KD * deriv;
+  return constrain((int16_t)out, -255, 255);
 }
 
-// ---- PEN ----
+// ============================================================
+//  PEN
+// ============================================================
 void penUp()   { penServo.write(PEN_UP_ANGLE);   delay(PEN_SETTLE_MS); }
 void penDown() { penServo.write(PEN_DOWN_ANGLE);  delay(PEN_SETTLE_MS); }
 
-// ---- MOVE TO POSITION (blocking) ----
-void moveTo(float x, float y) {
-  tgtX = x;
-  tgtY = y;
-  hasTarget = true;
-  intgX = intgY = peX = peY = 0;
+// ============================================================
+//  MOVE TO POSITION (blocking)
+//
+//  1. Compute direction and distance to target
+//  2. Choose speed (ramp down near target)
+//  3. Inverse kinematics → desired wheel speeds (ticks/s)
+//  4. Per-wheel PID → PWM for each motor
+//  5. Repeat until within POS_TOL or timeout
+// ============================================================
+void moveTo(float tx, float ty) {
+  // Reset wheel PIDs for fresh move
+  for (uint8_t i = 0; i < 3; i++) { wIntg[i] = 0; wPrevErr[i] = 0; }
 
-  // Timeout scales with distance — 50ms per mm, minimum 5s
-  float dx = x - posX;
-  float dy = y - posY;
-  float dist = sqrtf(dx * dx + dy * dy);
-  unsigned long timeout = max(5000UL, (unsigned long)(dist * 50));
-  unsigned long deadline = millis() + timeout;
+  // Timeout proportional to distance
+  float initDist = sqrtf((tx-posX)*(tx-posX) + (ty-posY)*(ty-posY));
+  unsigned long deadline = millis() + max(5000UL, (unsigned long)(initDist * 60));
   unsigned long lastPrint = 0;
 
   Serial.print(F("-> "));
-  Serial.print(x, 1);
-  Serial.print(F(", "));
-  Serial.println(y, 1);
+  Serial.print(tx, 1); Serial.print(F(", ")); Serial.println(ty, 1);
 
-  while (hasTarget) {
+  while (true) {
     if (millis() >= deadline) {
       Serial.println(F("TIMEOUT"));
       stopAll();
-      hasTarget = false;
       return;
     }
 
     unsigned long now = millis();
-    if (now - lastLoop >= LOOP_MS) {
-      float dt = (float)(now - lastLoop) / 1000.0f;
-      lastLoop = now;
-      updateOdometry();
-      pidStep(dt);
+    if (now - lastLoop < LOOP_MS) continue;
+    float dt = (float)(now - lastLoop) / 1000.0f;
+    lastLoop = now;
+
+    // 1. Read encoders → wheel speeds + update position
+    float wheelSpd[3];
+    readEncoders(dt, wheelSpd);
+
+    // 2. Position error
+    float ex = tx - posX;
+    float ey = ty - posY;
+    float dist = sqrtf(ex * ex + ey * ey);
+
+    if (dist < POS_TOL) {
+      stopAll();
+      return;
     }
 
-    // Print position every 500ms for debugging
+    // 3. Desired robot velocity — direction × speed
+    float speed = constrain(dist * RAMP_GAIN, MIN_SPEED, MAX_SPEED);
+    float vx = (ex / dist) * speed;     // mm/s
+    float vy = (ey / dist) * speed;
+
+    // 4. Inverse kinematics → desired wheel speeds in ticks/s
+    float tgtSpd[3];
+    for (uint8_t i = 0; i < 3; i++) {
+      float wheelMM = -sinW[i] * vx + cosW[i] * vy;
+      tgtSpd[i] = wheelMM / MM_PER_TICK;
+    }
+
+    // 5. Per-wheel PID → motor PWM
+    for (uint8_t i = 0; i < 3; i++) {
+      setMotor(i, wheelPID(i, tgtSpd[i], wheelSpd[i], dt));
+    }
+
+    // Debug
     if (millis() - lastPrint > 500) {
       lastPrint = millis();
-      Serial.print(F("  at "));
-      Serial.print(posX, 1);
-      Serial.print(F(", "));
-      Serial.println(posY, 1);
+      Serial.print(F("  "));
+      Serial.print(posX, 1); Serial.print(F(", ")); Serial.println(posY, 1);
     }
   }
 }
 
-// ---- HOME RESET ----
+// ============================================================
+//  HOME RESET
+// ============================================================
 void homeReset() {
   stopAll();
   noInterrupts();
@@ -218,23 +229,19 @@ void homeReset() {
   interrupts();
   prevTicks[0] = prevTicks[1] = prevTicks[2] = 0;
   posX = posY = 0;
-  hasTarget = false;
-  intgX = intgY = peX = peY = 0;
 }
 
-// ---- ENCODER CALIBRATION ----
-// Runs each motor FORWARD briefly and checks if encoder counts positive.
-// If not, flips the sign so odometry always agrees with motor direction.
+// ============================================================
+//  ENCODER CALIBRATION
+//  Runs each motor FORWARD briefly, checks encoder sign.
+// ============================================================
 void calibrateEncoders() {
   Serial.println(F("Calibrating encoders..."));
-
   for (uint8_t i = 0; i < 3; i++) {
-    // Zero this encoder
     noInterrupts();
     encTicks[i] = 0;
     interrupts();
 
-    // Run motor FORWARD at moderate speed
     mot[i]->setSpeed(200);
     mot[i]->run(FORWARD);
     delay(300);
@@ -242,90 +249,75 @@ void calibrateEncoders() {
     mot[i]->run(RELEASE);
     delay(100);
 
-    // Read result
     noInterrupts();
-    long count = encTicks[i];
+    long c = encTicks[i];
     interrupts();
 
-    Serial.print(F("  M"));
-    Serial.print(i + 1);
-    Serial.print(F(": "));
-    Serial.print(count);
+    Serial.print(F("  M")); Serial.print(i + 1);
+    Serial.print(F(": ")); Serial.print(c);
 
-    if (count < 0) {
-      encSign[i] = -1;
-      Serial.println(F(" -> flipped"));
-    } else if (count > 0) {
-      encSign[i] = 1;
-      Serial.println(F(" -> OK"));
-    } else {
-      encSign[i] = 1;
-      Serial.println(F(" -> NO TICKS! Check wiring"));
-    }
+    if (c < 0)      { encSign[i] = -1; Serial.println(F(" flipped")); }
+    else if (c > 0)  { encSign[i] =  1; Serial.println(F(" ok")); }
+    else              { encSign[i] =  1; Serial.println(F(" NO TICKS")); }
   }
 
-  // Reset everything after calibration
   noInterrupts();
   encTicks[0] = encTicks[1] = encTicks[2] = 0;
   interrupts();
   prevTicks[0] = prevTicks[1] = prevTicks[2] = 0;
 }
 
-// ---- DRAW STAR ----
-// 5-pointed pentagram, 25cm radius, centered at starting position.
-void drawStar() {
-  Serial.println(F("Drawing star..."));
-
-  // 5 vertices on a circle, starting at top (90 degrees)
-  float vx[5], vy[5];
-  for (int i = 0; i < 5; i++) {
-    float a = PI / 2.0f + i * 2.0f * PI / 5.0f;
-    vx[i] = STAR_RADIUS * cosf(a);
-    vy[i] = STAR_RADIUS * sinf(a);
-  }
-
-  // Pentagram order: skip every other vertex
-  const int order[] = {0, 2, 4, 1, 3, 0};
-
-  // Travel to first vertex pen up
+// ============================================================
+//  DRAWING ENGINE
+//  Reads (x,y) pairs from PROGMEM, handles pen up/down marks.
+// ============================================================
+void executeDrawing() {
+  Serial.println(F("Drawing..."));
   penUp();
-  moveTo(vx[order[0]], vy[order[0]]);
+  bool firstPt = true;
 
-  // Draw the star
-  penDown();
-  for (int i = 1; i <= 5; i++) {
-    moveTo(vx[order[i]], vy[order[i]]);
+  for (uint16_t i = 0; i < DRAWING_DATA_LEN - 1; i += 2) {
+    float x = pgm_read_float(&drawing_data[i]);
+    float y = pgm_read_float(&drawing_data[i + 1]);
+
+    if (x < PATH_END_MARK + 1.0f) break;
+    if (x < PEN_UP_MARK + 1.0f) {
+      penUp();
+      firstPt = true;
+      continue;
+    }
+
+    if (firstPt) {
+      moveTo(x, y);
+      penDown();
+      firstPt = false;
+    } else {
+      moveTo(x, y);
+    }
   }
 
-  // Lift pen, return home
   penUp();
   moveTo(0, 0);
-
   stopAll();
   Serial.println(F("Done!"));
 }
 
-// ---- SETUP ----
+// ============================================================
+//  SETUP
+// ============================================================
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("Omni Draw Robot - Star"));
+  Serial.println(F("Omni Draw Robot"));
 
-  // Precompute wheel angle trig
-  const float angles[] = {
-    90.0f  * PI / 180.0f,
-    210.0f * PI / 180.0f,
-    330.0f * PI / 180.0f
-  };
+  // Precompute wheel trig
+  const float angles[] = { 90*DEG_TO_RAD, 210*DEG_TO_RAD, 330*DEG_TO_RAD };
   for (uint8_t i = 0; i < 3; i++) {
     sinW[i] = sinf(angles[i]);
     cosW[i] = cosf(angles[i]);
   }
 
   // Motor shield
-  if (!AFMS.begin()) {
-    Serial.println(F("No motor shield!"));
-    while (1);
-  }
+  if (!AFMS.begin()) { Serial.println(F("No shield!")); while (1); }
   mot[0] = AFMS.getMotor(1);
   mot[1] = AFMS.getMotor(2);
   mot[2] = AFMS.getMotor(3);
@@ -343,31 +335,32 @@ void setup() {
   pinMode(ENC3_A, INPUT_PULLUP);
   pinMode(ENC3_B, INPUT_PULLUP);
 
-  // Encoder interrupts — CHANGE mode for full 14 CPR
+  // Encoder interrupts (CHANGE mode for full 14 CPR)
   attachInterrupt(digitalPinToInterrupt(ENC1_A), isr1, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC2_A), isr2, CHANGE);
-  // Encoder 3: pin-change interrupt fires on both edges already
   PCICR  |= (1 << PCIE0);
   PCMSK0 |= (1 << PCINT0);
 
-  // Auto-detect encoder direction by running each motor briefly
+  // Auto-calibrate encoder directions
   calibrateEncoders();
 
   // Button
   pinMode(BTN_PIN, INPUT_PULLUP);
 
   lastLoop = millis();
-  Serial.println(F("Ready - press button to draw star"));
+  Serial.println(F("Ready — press button"));
 }
 
-// ---- LOOP ----
+// ============================================================
+//  LOOP
+// ============================================================
 void loop() {
   if (digitalRead(BTN_PIN) == LOW) {
     delay(50);
     if (digitalRead(BTN_PIN) == LOW) {
       while (digitalRead(BTN_PIN) == LOW) delay(10);
       homeReset();
-      drawStar();
+      executeDrawing();
     }
   }
 }

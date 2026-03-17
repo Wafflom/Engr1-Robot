@@ -88,7 +88,6 @@ float ki = 10.0;   // Overcomes motor stiction
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
 #define SPEED             255      // Full PWM for open-loop circle drawing
-#define MAX_PID_PWM       180      // Cap PID motor power for smoother travel (0-255)
 
 // -- Arc parameters --
 #define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
@@ -282,12 +281,11 @@ void inverseKinematics(float vx, float vy, float *w) {
 }
 
 // Convert float wheel speeds to direction + PWM and send to motors
-// maxPwm caps the motor power (use MAX_PID_PWM for travel, 255 for circles)
-void applyWheelSpeeds(float *w, int maxPwm) {
+void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
   for (uint8_t i = 0; i < 3; i++) {
     int pwr = (int)fabs(w[i]);       // Power = absolute value
-    if (pwr > maxPwm) pwr = maxPwm;  // Cap at max allowed PWM
+    if (pwr > 255) pwr = 255;        // Cap at max PWM
     int dir = 1;                      // Assume forward
     if (w[i] < 0) dir = -1;          // Negative = backward
     if (pwr < 5) dir = 0;            // Too small = release
@@ -305,7 +303,7 @@ void driveVelocity(float vx, float vy) {
     float s = (float)SPEED / peak;
     w[0] *= s; w[1] *= s; w[2] *= s;
   }
-  applyWheelSpeeds(w, 255);  // Full speed for circles
+  applyWheelSpeeds(w);
 }
 
 // ============================================================
@@ -366,10 +364,10 @@ void moveTo(float targetX, float targetY) {
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
-    // Convert to wheel speeds and drive (capped for smoother travel)
+    // Convert to wheel speeds and drive
     float w[3];
     inverseKinematics(uX, uY, w);
-    applyWheelSpeeds(w, MAX_PID_PWM);
+    applyWheelSpeeds(w);
 
     // Save error for next derivative
     eprevX = eX; eprevY = eY;

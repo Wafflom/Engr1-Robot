@@ -30,7 +30,7 @@
   <line x1="270" y1="275" x2="383" y2="340" stroke="#555" stroke-width="1" stroke-dasharray="4,3"/>
 
   <!-- 60mm radius annotation along the top radius line -->
-  <text x="305" y="200" fill="#999" font-size="13" font-style="italic" transform="rotate(-75, 305, 200)">60 mm</text>
+  <text x="305" y="200" fill="#999" font-size="13" font-style="italic" transform="rotate(-75, 305, 200)">88 mm</text>
 
   <!-- ==================== WHEEL 1 (front, 90 deg, top of circle) ==================== -->
   <!-- Position: (270, 145). Tangent at 90 deg is horizontal => rotation 0 deg -->

@@ -28,12 +28,12 @@
  *
  *   Example of how the robot reads the data:
  *
- *     0, 0,         ← travel to (0,0) with pen up, then pen down
- *     0, 30,        ← draw a line from (0,0) to (0,30)
- *     -8888, -8888, ← lift pen
- *     10, 0,        ← travel to (10,0) with pen up, then pen down
- *     10, 30,       ← draw a line from (10,0) to (10,30)
- *     -9999, -9999  ← done!
+ *     0, 0,         <- travel to (0,0) with pen up, then pen down
+ *     0, 30,        <- draw a line from (0,0) to (0,30)
+ *     -8888, -8888, <- lift pen
+ *     10, 0,        <- travel to (10,0) with pen up, then pen down
+ *     10, 30,       <- draw a line from (10,0) to (10,30)
+ *     -9999, -9999  <- done!
  *
  * COORDINATE SYSTEM:
  *   X = rightward (millimeters)
@@ -64,22 +64,23 @@
 #define PATH_END_MARK -9999.0f    // signals: drawing is finished
 
 // ============================================================
-//  "HELLO" — block letter coordinates
+//  "HELLO" — block letter coordinates (scaled to ~276mm x 90mm)
 //
 //  Each letter is drawn as a series of straight-line strokes.
 //  Between letters (and between strokes within a letter), we
 //  insert PEN_UP_MARK to lift the pen and reposition.
 //
-//  Letter sizes (all in mm):
-//    H : 16mm wide × 30mm tall  (3 strokes)
-//    E : 12mm wide × 30mm tall  (2 strokes)
-//    L : 12mm wide × 30mm tall  (1 stroke)
-//    L : 12mm wide × 30mm tall  (1 stroke)
-//    O : 16mm wide × 30mm tall  (1 stroke, closed rectangle)
+//  Letter sizes (all in mm, 3x scale):
+//    H : 48mm wide x 90mm tall  (3 strokes)
+//    E : 36mm wide x 90mm tall  (2 strokes)
+//    L : 36mm wide x 90mm tall  (1 stroke)
+//    L : 36mm wide x 90mm tall  (1 stroke)
+//    O : 48mm wide x 90mm tall  (1 stroke, closed rectangle)
 //
-//  Spacing: 6mm gap between each letter
+//  Spacing: 18mm gap between each letter
 //
-//  Total width: 16 + 6 + 12 + 6 + 12 + 6 + 12 + 6 + 16 = 92mm
+//  Total width: 48 + 18 + 36 + 18 + 36 + 18 + 36 + 18 + 48 = 276mm
+//  Fits within a 300mm x 300mm area
 // ============================================================
 
 // PROGMEM tells the compiler to store this array in flash memory
@@ -92,70 +93,70 @@
 
 const float drawing_data[] PROGMEM = {
 
-  // ==================== LETTER H (x: 0 to 16) ====================
+  // ==================== LETTER H (x: 0 to 48) ====================
 
   // Stroke 1: left vertical bar (bottom to top)
   0.0f, 0.0f,        // start at bottom-left of the H
-  0.0f, 30.0f,       // draw straight up 30mm
+  0.0f, 90.0f,       // draw straight up 90mm
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, reposition
 
   // Stroke 2: horizontal crossbar (left to right)
-  0.0f, 15.0f,       // start at left side, halfway up
-  16.0f, 15.0f,      // draw across to right side
+  0.0f, 45.0f,       // start at left side, halfway up
+  48.0f, 45.0f,      // draw across to right side
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, reposition
 
   // Stroke 3: right vertical bar (bottom to top)
-  16.0f, 0.0f,       // start at bottom-right of the H
-  16.0f, 30.0f,      // draw straight up 30mm
+  48.0f, 0.0f,       // start at bottom-right of the H
+  48.0f, 90.0f,      // draw straight up 90mm
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, move to next letter
 
-  // ==================== LETTER E (x: 22 to 34) ====================
-  // (starts at x=22 because H ends at x=16, plus 6mm gap)
+  // ==================== LETTER E (x: 66 to 102) ====================
+  // (starts at x=66 because H ends at x=48, plus 18mm gap)
 
   // Stroke 1: three sides in one continuous stroke
   // (top bar + left bar + bottom bar, drawn as one path)
-  34.0f, 30.0f,      // start at top-right corner
-  22.0f, 30.0f,      // draw left across the top
-  22.0f, 0.0f,       // draw down the left side
-  34.0f, 0.0f,       // draw right across the bottom
+  102.0f, 90.0f,     // start at top-right corner
+  66.0f, 90.0f,      // draw left across the top
+  66.0f, 0.0f,       // draw down the left side
+  102.0f, 0.0f,      // draw right across the bottom
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, reposition
 
   // Stroke 2: middle horizontal bar
-  22.0f, 15.0f,      // start at left side, middle height
-  32.0f, 15.0f,      // draw across (slightly shorter than top/bottom)
+  66.0f, 45.0f,      // start at left side, middle height
+  96.0f, 45.0f,      // draw across (slightly shorter than top/bottom)
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, move to next letter
 
-  // ==================== LETTER L (x: 40 to 52) ====================
+  // ==================== LETTER L (x: 120 to 156) ====================
 
   // Single stroke: vertical bar + bottom horizontal
-  40.0f, 30.0f,      // start at top
-  40.0f, 0.0f,       // draw down to bottom-left corner
-  52.0f, 0.0f,       // draw right along the bottom
+  120.0f, 90.0f,     // start at top
+  120.0f, 0.0f,      // draw down to bottom-left corner
+  156.0f, 0.0f,      // draw right along the bottom
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, move to next letter
 
-  // ==================== LETTER L (x: 58 to 70) ====================
+  // ==================== LETTER L (x: 174 to 210) ====================
 
   // Same shape as the previous L, just shifted right
-  58.0f, 30.0f,      // start at top
-  58.0f, 0.0f,       // draw down
-  70.0f, 0.0f,       // draw right along bottom
+  174.0f, 90.0f,     // start at top
+  174.0f, 0.0f,      // draw down
+  210.0f, 0.0f,      // draw right along bottom
 
   PEN_UP_MARK, PEN_UP_MARK,   // lift pen, move to next letter
 
-  // ==================== LETTER O (x: 76 to 92) ====================
+  // ==================== LETTER O (x: 228 to 276) ====================
 
   // Single stroke: closed rectangle (returns to start point)
-  76.0f, 0.0f,       // start at bottom-left
-  92.0f, 0.0f,       // draw right along bottom
-  92.0f, 30.0f,      // draw up the right side
-  76.0f, 30.0f,      // draw left across the top
-  76.0f, 0.0f,       // draw down to starting point (closes the rectangle)
+  228.0f, 0.0f,      // start at bottom-left
+  276.0f, 0.0f,      // draw right along bottom
+  276.0f, 90.0f,     // draw up the right side
+  228.0f, 90.0f,     // draw left across the top
+  228.0f, 0.0f,      // draw down to starting point (closes the rectangle)
 
   // ==================== END OF DRAWING ====================
   PATH_END_MARK, PATH_END_MARK  // tells the drawing engine to stop

@@ -16,7 +16,6 @@ This document explains the firmware architecture, every major function, and how 
 - [PID Controller](#pid-controller)
 - [Pen Servo](#pen-servo)
 - [Drawing Engine](#drawing-engine)
-- [Serial Command Interface](#serial-command-interface)
 - [Main Loop](#main-loop)
 - [Creating Custom Drawings](#creating-custom-drawings)
 - [Tuning Guide](#tuning-guide)
@@ -42,7 +41,7 @@ All tunable values are `#define` constants near the top of `omni_draw_robot.ino`
 |-----------|---------|-------------|
 | `ENCODER_CPR` | 600.0 | Encoder counts per wheel revolution (12 PPR x 50:1 gear) |
 | `WHEEL_DIA_MM` | 36.0 | Outer diameter of the omni-wheels in mm |
-| `ROBOT_RADIUS_MM` | 60.0 | Distance from robot center to wheel contact point in mm |
+| `ROBOT_RADIUS_MM` | 88.0 | Distance from robot center to wheel contact point in mm |
 | `MM_PER_TICK` | 0.1885 | Linear distance per encoder tick: (pi x 36) / 600 |
 
 ### Servo
@@ -280,52 +279,16 @@ homeReset()  →  penUp()  →  read first point
 | `-8888.0` | Pen up marker — lift pen before the next move |
 | `-9999.0` | End of drawing — stop and return home |
 
-### Status indicators during drawing
-
-- **Red LED (D11)**: ON while drawing
-- **Green LED (D13)**: ON when drawing is complete
-- **Serial output**: Logs each move (`>> x,y` for pen-up travel, `-- x,y` for pen-down drawing)
-
----
-
-## Serial Command Interface
-
-### `handleCmd(const char *c)`
-
-Parses newline-terminated commands from the Serial Monitor (115200 baud):
-
-| Command | Example | What it does |
-|---------|---------|-------------|
-| `D` | `D` | Execute the full drawing sequence |
-| `G X Y` | `G 25.0 10.5` | Move to coordinates (25.0, 10.5) mm |
-| `PU` | `PU` | Lift the pen |
-| `PD` | `PD` | Lower the pen |
-| `H` | `H` | Reset position to (0, 0), zero encoders |
-| `?` | `?` | Print current (posX, posY) to serial |
-
-Commands are read character by character in the main loop, buffered until a newline (`\n`) is received, then dispatched to `handleCmd()`.
-
 ---
 
 ## Main Loop
 
 ```c
 void loop() {
-    // 1. Control tick every LOOP_MS (10 ms)
-    if (millis() - lastTick >= LOOP_MS) {
-        updateOdometry();
-        pidStep(dt);
-        lastTick = millis();
-    }
-
-    // 2. Button check (with 50 ms debounce)
+    // Button check with debounce — starts drawing
     if (buttonPressed && debounced) {
+        homeReset();
         executeDrawing();  // blocks until done
-    }
-
-    // 3. Serial command reader
-    if (Serial.available()) {
-        // buffer characters, dispatch on newline
     }
 }
 ```
@@ -376,10 +339,9 @@ const int drawing_len = sizeof(drawing_data) / sizeof(drawing_data[0]);
 
 ### Tips
 
-- Keep coordinates positive and reasonable (under ~200 mm in each direction)
+- Keep coordinates positive and reasonable (under ~300 mm in each direction)
 - The robot's accuracy is about 0.8 mm, so details smaller than ~2 mm won't render well
-- Test individual moves with the `G X Y` serial command before committing to a full drawing
-- Use the `?` command to check actual vs. expected position after moves
+- Test with small shapes first before attempting large drawings
 
 ---
 
@@ -405,7 +367,7 @@ If the robot isn't drawing accurately, adjust these parameters:
 
 ### Motors stall at low speeds
 
-- Increase `DEADBAND` (try 30-40)
+- Increase `DEADBAND` (default 130, try higher if needed)
 
 ### Drawing is scaled wrong
 

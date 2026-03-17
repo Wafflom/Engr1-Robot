@@ -83,7 +83,7 @@ Servo penServo;                             // Pen lift servo
 
 // Travel PID (G0): pen up, gentle cruise
 float kp_travel = 40.0;
-float kd_travel = 10.0;
+float kd_travel = 2.0;
 float ki_travel = 0.0;
 
 // Straight-line PID (G1): pen down, accuracy matters
@@ -92,8 +92,8 @@ float kd_line = 0.0;
 float ki_line = 0.0;
 
 // Curve PID (arc segments): aggressive to push through small segments
-float kp_curve = 60.0;
-float kd_curve = 5.0;
+float kp_curve = 80.0;
+float kd_curve = 10.0;
 float ki_curve = 15.0;
 
 // minimum PWM
@@ -281,6 +281,7 @@ void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
 void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 
 // Convert float wheel speeds to direction + PWM and send to motors
+int minPWM = 80; // minimum motor power to overcome friction and actually have motor move
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 
@@ -326,7 +327,10 @@ void applyWheelSpeeds(float *w) {
 //    output = kp*error + kd*derivative + ki*integral
 // ============================================================
 
-void moveTo(float targetX, float targetY) {
+// tolerance: how close to target before exiting (mm)
+// stopOnArrival: true = stop motors on arrival (endpoints),
+//                false = keep motors running (mid-arc waypoints)
+void moveTo(float targetX, float targetY, float tolerance, bool stopOnArrival) {
   // Reset PID state for this new move
   eprevX = 0; eprevY = 0;
   eintegralX = 0; eintegralY = 0;
@@ -348,7 +352,10 @@ void moveTo(float targetX, float targetY) {
     float dist = sqrtf(eX * eX + eY * eY);
 
     // Arrived?
-    if (dist < POS_TOL_MM) { stopAll(); break; }
+    if (dist < tolerance) {
+      if (stopOnArrival) stopAll();
+      break;
+    }
 
     // Timeout?
     if (millis() >= deadline) {
@@ -377,6 +384,11 @@ void moveTo(float targetX, float targetY) {
     // Save error for next derivative
     eprevX = eX; eprevY = eY;
   }
+}
+
+// Convenience: stop precisely at target (used by G0/G1 moves)
+void moveTo(float targetX, float targetY) {
+  moveTo(targetX, targetY, POS_TOL_MM, true);
 }
 
 // ============================================================
@@ -432,10 +444,18 @@ void penDown() {
 #define COS30 0.8660254f
 #define SIN30 0.5f
 
+// Pass-through tolerance for chained arc segments (mm)
+// Intermediate waypoints exit early at this distance — the robot
+// doesn't slow down, it just moves on to the next waypoint.
+// Larger = smoother but less accurate. Smaller = more accurate but jerkier.
+float arcChainTol = 7.0f;   // adjustable — try 5-10mm
+
 // Low-level direct move helper (does NOT split into 2-wheel directions)
 // Used by arc segments where moves are small enough (~10mm) that
-// rotation is minimal, and splitting would make arcs jagged
-void gcMoveToRaw(float absX, float absY) {
+// rotation is minimal, and splitting would make arcs jagged.
+// chain=true: pass-through waypoint (loose tolerance, don't stop)
+// chain=false: final endpoint (tight tolerance, full stop)
+void gcMoveToRaw(float absX, float absY, bool chain) {
   float dx = absX - gcX;
   float dy = absY - gcY;
 
@@ -445,9 +465,15 @@ void gcMoveToRaw(float absX, float absY) {
     return;
   }
 
-  useCurvePID();  // Gentle gains for arc segments
+  useCurvePID();
   resetOdometry();
-  moveTo(dx, dy);
+  if (chain) {
+    // Pass through — loose tolerance, don't stop motors
+    moveTo(dx, dy, arcChainTol, false);
+  } else {
+    // Final point — tight tolerance, full stop
+    moveTo(dx, dy, POS_TOL_MM, true);
+  }
   gcX = absX; gcY = absY;
 }
 
@@ -538,17 +564,19 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   penDown();
 
   // Move through each segment point on the arc
-  // Uses gcMoveToRaw (direct diagonal) because arc segments are small (~10mm)
-  // and L-shaped moves would make the arc jagged
+  // Intermediate segments use motion chaining (loose tolerance, no stop)
+  // so the robot flows smoothly through waypoints instead of start-stop.
+  // Only the final segment stops precisely.
   for (int s = 1; s <= numSegs; s++) {
     float frac = (float)s / (float)numSegs;
     float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
     float px = cx + radius * cosf(ang);
     float py = cy + radius * sinf(ang);
-    gcMoveToRaw(px, py);
+    bool isLast = (s == numSegs);
+    gcMoveToRaw(px, py, !isLast);  // chain=true for intermediate, false for last
   }
 
-  gcMoveToRaw(endX, endY);  // Ensure we end exactly at the target
+  gcMoveToRaw(endX, endY, false);  // Ensure we end exactly at the target
 }
 
 // ============================================================

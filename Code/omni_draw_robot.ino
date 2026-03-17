@@ -498,11 +498,11 @@ void gcSmoothArc(float cx, float cy, float radius,
   float arcLen = radius * sweep;
   int numSegs = (int)(arcLen / ARC_SEG_MM);
   if (numSegs < 4) numSegs = 4;
-  if (numSegs > 120) numSegs = 120;  // Cap for memory on Arduino
+  if (numSegs > 60) numSegs = 60;   // Keep arrays small for Arduino RAM
 
   // Waypoints stored as relative offsets from arc start position
   // (we reset odometry at start, so everything is relative)
-  float wpX[121], wpY[121];
+  float wpX[61], wpY[61];
   float arcStartX = cx + radius * cosf(startAng);
   float arcStartY = cy + radius * sinf(startAng);
 
@@ -514,31 +514,26 @@ void gcSmoothArc(float cx, float cy, float radius,
   }
   int numWP = numSegs;
 
-  // Precompute cumulative distance from each waypoint to the end
-  // so we don't do O(n) sqrt() every PID iteration (was causing stutter)
-  float cumDistToEnd[121];
-  cumDistToEnd[numWP - 1] = 0.0f;
-  for (int i = numWP - 2; i >= 0; i--) {
-    float dx = wpX[i + 1] - wpX[i];
-    float dy = wpY[i + 1] - wpY[i];
-    cumDistToEnd[i] = cumDistToEnd[i + 1] + sqrtf(dx * dx + dy * dy);
-  }
+  // Segment length (waypoints are evenly spaced along the arc)
+  float segLen = arcLen / (float)numSegs;
 
   // Reset odometry and PID for this arc
   resetOdometry();
   eprevX = 0; eprevY = 0;
   eintegralX = 0; eintegralY = 0;
-  prevT = micros();
 
   useCurvePID();
 
   int curWP = 0;
   unsigned long deadline = millis() + ARC_TIMEOUT_MS;
+  prevT = micros();
+  delay(1);  // Ensure first deltaT is sane (not ~0)
 
   while (true) {
     // Timing
     long currT = micros();
     float deltaT = ((float)(currT - prevT)) / 1.0e6;
+    if (deltaT < 0.0005f) deltaT = 0.0005f;  // Floor at 0.5ms
     prevT = currT;
 
     updateOdometry();
@@ -549,7 +544,6 @@ void gcSmoothArc(float cx, float cy, float radius,
     float dist = sqrtf(eX * eX + eY * eY);
 
     // Advance through multiple waypoints if we've passed them
-    // (prevents backward-pointing error if robot is moving fast)
     while (dist < arcLookahead && curWP < numWP - 1) {
       curWP++;
       eX = wpX[curWP] - posX;
@@ -575,17 +569,17 @@ void gcSmoothArc(float cx, float cy, float radius,
     float dedtY = (eY - eprevY) / deltaT;
     eintegralX += eX * deltaT;
     eintegralY += eY * deltaT;
-    // Clamp integral to prevent windup
     eintegralX = constrain(eintegralX, -50.0f, 50.0f);
     eintegralY = constrain(eintegralY, -50.0f, 50.0f);
 
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
-    // Decelerate near the end — O(1) lookup instead of O(n) loop
-    float distToEnd = cumDistToEnd[curWP] + dist;
+    // Decelerate near the end — O(1) math, no arrays needed
+    // Waypoints are evenly spaced, so remaining distance is trivial
+    float distToEnd = (float)(numWP - 1 - curWP) * segLen + dist;
     if (distToEnd < arcDecelDist) {
-      float scale = distToEnd / arcDecelDist;  // 1.0 → 0.0
+      float scale = distToEnd / arcDecelDist;
       if (scale < 0.2f) scale = 0.2f;
       uX *= scale;
       uY *= scale;

@@ -102,12 +102,13 @@ float kp, kd, ki;
 // -- Movement parameters --
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
+#define SPEED             255      // Full PWM for open-loop circle drawing
 
 // -- Arc parameters --
-#define ARC_SEG_MM        3.0f     // Arc segment length (mm) — finer = smoother path
-#define ARC_TIMEOUT_MS    20000UL  // Max time for any arc (ms)
-float arcLookahead = 5.0f;         // Advance to next waypoint at this distance (mm, adjustable)
-float arcDecelDist = 20.0f;        // Start slowing down this far from end (mm, adjustable)
+#define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
+#define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
+#define CIRCLE_RAMP_RAD   0.5f    // How far from end to start decelerating (~30°)
+#define CIRCLE_MIN_SPD    80      // Slowest speed during deceleration ramp
 
 // ============================================================
 //  WHEEL GEOMETRY
@@ -152,6 +153,14 @@ float eintegralY = 0;      // Accumulated Y error (integral term)
 float posX = 0.0f;                    // X position since last reset (mm)
 float posY = 0.0f;                    // Y position since last reset (mm)
 int posPrev[3] = {0, 0, 0};           // Previous encoder snapshots
+
+// ============================================================
+//  PATH LENGTH STATE (used for circle drawing)
+// ============================================================
+
+float pathLen = 0.0f;                  // Distance traveled since last reset
+float prevPathX = 0.0f;               // Previous position for distance calc
+float prevPathY = 0.0f;
 
 // ============================================================
 //  G-CODE INTERPRETER STATE
@@ -241,6 +250,19 @@ void resetOdometry() {
   posX = 0.0f; posY = 0.0f;
 }
 
+// Reset path length counter (for measuring circle circumference)
+void resetPathLength() {
+  pathLen = 0.0f;
+  prevPathX = posX; prevPathY = posY;
+}
+
+// Add distance traveled since last call to path length
+void updatePathLength() {
+  float dx = posX - prevPathX;
+  float dy = posY - prevPathY;
+  pathLen += sqrtf(dx * dx + dy * dy);
+  prevPathX = posX; prevPathY = posY;
+}
 
 // ============================================================
 //  MOTOR CONTROL
@@ -312,6 +334,17 @@ void applyWheelSpeeds(float *w) {
   }
 }
 
+// Drive in direction (vx, vy) at given speed — used for open-loop circles
+void driveVelocity(float vx, float vy, int spd) {
+  float w[3];
+  inverseKinematics(vx, vy, w);
+  float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
+  if (peak > 0.001f) {
+    float s = (float)spd / peak;
+    w[0] *= s; w[1] *= s; w[2] *= s;
+  }
+  applyWheelSpeeds(w);
+}
 
 // ============================================================
 //  PID POSITION CONTROLLER
@@ -434,6 +467,25 @@ void penDown() {
 #define COS30 0.8660254f
 #define SIN30 0.5f
 
+// Low-level direct move helper (does NOT split into 2-wheel directions)
+// Used by arc segments where moves are small enough (~10mm) that
+// rotation is minimal, and splitting would make arcs jagged
+void gcMoveToRaw(float absX, float absY) {
+  float dx = absX - gcX;
+  float dy = absY - gcY;
+
+  // Skip tiny moves (less than 0.5mm)
+  if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f) {
+    gcX = absX; gcY = absY;
+    return;
+  }
+
+  useCurvePID();
+  resetOdometry();
+  moveTo(dx, dy);
+  gcX = absX; gcY = absY;
+}
+
 // 2-wheel decomposed move: 30° direction first, then pure Y
 // Both legs engage exactly 2 wheels symmetrically to prevent twisting
 void gcMoveTo(float absX, float absY) {
@@ -475,130 +527,58 @@ void gcMoveTo(float absX, float absY) {
 }
 
 // ============================================================
-//  G-CODE EXECUTION: SMOOTH ARC (continuous PID with waypoint chaining)
+//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep with decel ramp)
 //
-//  ONE continuous PID loop for the entire arc. The arc is
-//  subdivided into waypoints, and the target advances to the
-//  next waypoint when the robot gets within arcLookahead distance.
-//  The PID state (integral, derivative) is never reset between
-//  waypoints, so the robot flows smoothly through the arc.
-//
-//  This is how CNC machines do "continuous mode" (G64):
-//  - Don't stop at each waypoint
-//  - Advance the target when close enough
-//  - Decelerate only near the final point
-//  - One continuous control loop, not N separate moves
-//
-//  Works for full circles, partial arcs, and short arcs (smiles).
+//  For 360° arcs (endpoint == startpoint), we use open-loop
+//  velocity sweep — it's much smoother than PID segments.
+//  The robot drives tangent to the circle, tracking angle via
+//  theta = path_length / radius. Speed ramps down near the end
+//  to prevent overshoot from momentum.
 // ============================================================
 
-void gcSmoothArc(float cx, float cy, float radius,
-                 float startAng, float sweep, bool ccw) {
-  // Generate waypoints along the arc
-  float arcLen = radius * sweep;
-  int numSegs = (int)(arcLen / ARC_SEG_MM);
-  if (numSegs < 4) numSegs = 4;
-  if (numSegs > 60) numSegs = 60;   // Keep arrays small for Arduino RAM
+void gcFullCircle(float radius, bool ccw) {
+  Serial.print(F("Circle R=")); Serial.println(radius);
 
-  // Waypoints stored as relative offsets from arc start position
-  // (we reset odometry at start, so everything is relative)
-  float wpX[61], wpY[61];
-  float arcStartX = cx + radius * cosf(startAng);
-  float arcStartY = cy + radius * sinf(startAng);
-
-  for (int s = 1; s <= numSegs; s++) {
-    float frac = (float)s / (float)numSegs;
-    float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
-    wpX[s - 1] = (cx + radius * cosf(ang)) - arcStartX;
-    wpY[s - 1] = (cy + radius * sinf(ang)) - arcStartY;
-  }
-  int numWP = numSegs;
-
-  // Segment length (waypoints are evenly spaced along the arc)
-  float segLen = arcLen / (float)numSegs;
-
-  // Reset odometry and PID for this arc
   resetOdometry();
-  eprevX = 0; eprevY = 0;
-  eintegralX = 0; eintegralY = 0;
+  resetPathLength();
 
-  useCurvePID();
+  float theta = 0.0f;
+  unsigned long t0 = millis();
 
-  int curWP = 0;
-  unsigned long deadline = millis() + ARC_TIMEOUT_MS;
-  prevT = micros();
-  delay(1);  // Ensure first deltaT is sane (not ~0)
+  while (theta < 2.0f * PI) {
+    // Ramp speed down over the last CIRCLE_RAMP_RAD radians
+    float remaining = 2.0f * PI - theta;
+    int spd;
+    if (remaining < CIRCLE_RAMP_RAD) {
+      float frac = remaining / CIRCLE_RAMP_RAD;  // 1.0 → 0.0
+      spd = CIRCLE_MIN_SPD + (int)((SPEED - CIRCLE_MIN_SPD) * frac);
+    } else {
+      spd = SPEED;
+    }
 
-  while (true) {
-    // Timing
-    long currT = micros();
-    float deltaT = ((float)(currT - prevT)) / 1.0e6;
-    if (deltaT < 0.0005f) deltaT = 0.0005f;  // Floor at 0.5ms
-    prevT = currT;
+    float vx = cosf(theta);
+    float vy = ccw ? sinf(theta) : -sinf(theta);
+    driveVelocity(vx, vy, spd);
+    delay(1);
 
     updateOdometry();
+    updatePathLength();
+    theta = pathLen / radius;  // angle = arc_length / radius
 
-    // Error to current target waypoint
-    float eX = wpX[curWP] - posX;
-    float eY = wpY[curWP] - posY;
-    float dist = sqrtf(eX * eX + eY * eY);
-
-    // Advance through multiple waypoints if we've passed them
-    while (dist < arcLookahead && curWP < numWP - 1) {
-      curWP++;
-      eX = wpX[curWP] - posX;
-      eY = wpY[curWP] - posY;
-      dist = sqrtf(eX * eX + eY * eY);
-    }
-
-    // Final waypoint: arrive precisely
-    if (curWP == numWP - 1 && dist < POS_TOL_MM) {
-      stopAll();
+    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
+      Serial.println(F("circle timeout"));
       break;
     }
-
-    // Timeout
-    if (millis() >= deadline) {
-      Serial.println(F("arc timeout"));
-      stopAll();
-      break;
-    }
-
-    // PID — continuous, never reset between waypoints
-    float dedtX = (eX - eprevX) / deltaT;
-    float dedtY = (eY - eprevY) / deltaT;
-    eintegralX += eX * deltaT;
-    eintegralY += eY * deltaT;
-    eintegralX = constrain(eintegralX, -50.0f, 50.0f);
-    eintegralY = constrain(eintegralY, -50.0f, 50.0f);
-
-    float uX = kp * eX + kd * dedtX + ki * eintegralX;
-    float uY = kp * eY + kd * dedtY + ki * eintegralY;
-
-    // Decelerate near the end — O(1) math, no arrays needed
-    // Waypoints are evenly spaced, so remaining distance is trivial
-    float distToEnd = (float)(numWP - 1 - curWP) * segLen + dist;
-    if (distToEnd < arcDecelDist) {
-      float scale = distToEnd / arcDecelDist;
-      if (scale < 0.2f) scale = 0.2f;
-      uX *= scale;
-      uY *= scale;
-    }
-
-    // Drive
-    float w[3];
-    inverseKinematics(uX, uY, w);
-    applyWheelSpeeds(w);
-
-    eprevX = eX; eprevY = eY;
   }
+  stopAll();
 }
 
 // ============================================================
 //  G-CODE EXECUTION: ARC (G2/G3)
 //
-//  All arcs (full circles, partial, short) use the continuous
-//  PID arc system for smooth, accurate motion.
+//  Handles both full circles and partial arcs.
+//  Full circle: detected when endpoint ≈ startpoint → velocity sweep
+//  Partial arc: subdivided into line segments → PID to each
 //
 //  Parameters:
 //    endX, endY — arc endpoint (absolute)
@@ -612,32 +592,44 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   float cy = gcY + cj;
   float radius = sqrtf(ci * ci + cj * cj);
 
-  // Starting angle (from center to current position)
+  // Full circle check (endpoint ≈ startpoint) → use smooth velocity sweep
+  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
+    penDown();
+    gcFullCircle(radius, ccw);
+    return;
+  }
+
+  // Partial arc — calculate start and end angles
   float startAng = atan2f(gcY - cy, gcX - cx);
+  float endAng   = atan2f(endY - cy, endX - cx);
 
   // Calculate sweep angle
   float sweep;
-  if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
-    // Full circle (endpoint ≈ startpoint)
-    sweep = 2.0f * PI;
+  if (ccw) {
+    sweep = endAng - startAng;
+    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CCW
   } else {
-    // Partial arc
-    float endAng = atan2f(endY - cy, endX - cx);
-    if (ccw) {
-      sweep = endAng - startAng;
-      if (sweep <= 0) sweep += 2.0f * PI;
-    } else {
-      sweep = startAng - endAng;
-      if (sweep <= 0) sweep += 2.0f * PI;
-    }
+    sweep = startAng - endAng;
+    if (sweep <= 0) sweep += 2.0f * PI;  // Wrap for CW
   }
 
-  Serial.print(F("Arc R=")); Serial.print(radius);
-  Serial.print(F(" sweep=")); Serial.println(sweep * 180.0f / PI);
+  // Subdivide arc into line segments
+  float arcLen = radius * sweep;
+  int numSegs = (int)(arcLen / ARC_SEG_MM);
+  if (numSegs < 4) numSegs = 4;  // Minimum 4 segments
 
   penDown();
-  gcSmoothArc(cx, cy, radius, startAng, sweep, ccw);
-  gcX = endX; gcY = endY;
+
+  // Move through each segment point on the arc
+  for (int s = 1; s <= numSegs; s++) {
+    float frac = (float)s / (float)numSegs;
+    float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
+    float px = cx + radius * cosf(ang);
+    float py = cy + radius * sinf(ang);
+    gcMoveToRaw(px, py);
+  }
+
+  gcMoveToRaw(endX, endY);  // Ensure we end exactly at the target
 }
 
 // ============================================================

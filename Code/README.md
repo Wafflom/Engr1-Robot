@@ -41,9 +41,9 @@ All tunable values are `#define` constants near the top of `omni_draw_robot.ino`
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `ENCODER_CPR` | 600.0 | Encoder counts per wheel revolution (12 PPR x 50:1 gear) |
-| `WHEEL_DIA_MM` | 48.0 | Outer diameter of the omni-wheels in mm |
+| `WHEEL_DIA_MM` | 36.0 | Outer diameter of the omni-wheels in mm |
 | `ROBOT_RADIUS_MM` | 60.0 | Distance from robot center to wheel contact point in mm |
-| `MM_PER_TICK` | 0.2513 | Linear distance per encoder tick: (pi x 48) / 600 |
+| `MM_PER_TICK` | 0.1885 | Linear distance per encoder tick: (pi x 36) / 600 |
 
 ### Servo
 

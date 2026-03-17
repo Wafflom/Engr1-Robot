@@ -11,7 +11,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 - [Features](#features)
 - [Hardware Overview](#hardware-overview)
 - [Bill of Materials](#bill-of-materials)
-- [Wiring Diagram](#wiring-diagram)
+- [Wiring Schematic](#wiring-schematic)
 - [Wheel Layout](#wheel-layout)
 - [Assembly](#assembly)
 - [Software Setup](#software-setup)
@@ -42,7 +42,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | Motors | 3x Adafruit N20 DC Motors, 6V, 1:50 gear ratio |
 | Encoders | Magnetic, 12 PPR (600 ticks/rev after gearing) |
 | Pen Servo | SG90 Micro Servo |
-| Wheels | 48 mm diameter omni-wheels |
+| Wheels | 36 mm diameter omni-wheels |
 | Robot Radius | 60 mm (center to wheel contact) |
 
 ---
@@ -54,7 +54,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | 1 | Arduino Uno R3 | Main controller |
 | 1 | Adafruit Motor Shield V2 | Stacks on top of the Uno |
 | 3 | N20 DC motor with magnetic encoder | 6V, 1:50 gear ratio, 6-wire |
-| 3 | 48 mm omni-wheels | Press-fit onto motor shafts |
+| 3 | 36 mm omni-wheels | Press-fit onto motor shafts |
 | 1 | SG90 micro servo | For pen lift mechanism |
 | 1 | Momentary pushbutton | Normally open |
 | 1 | Red LED + 220 ohm resistor | Drawing indicator |

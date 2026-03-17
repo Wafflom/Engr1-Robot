@@ -72,5 +72,5 @@
 
   <!-- ==================== CAPTIONS ==================== -->
   <text x="270" y="462" text-anchor="middle" fill="#888" font-size="14" font-style="italic">Holonomic: moves in any direction without rotating</text>
-  <text x="270" y="484" text-anchor="middle" fill="#666" font-size="12">Wheels at 120° intervals, 48 mm diameter</text>
+  <text x="270" y="484" text-anchor="middle" fill="#666" font-size="12">Wheels at 120° intervals, 36 mm diameter</text>
 </svg>

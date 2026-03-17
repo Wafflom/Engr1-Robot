@@ -50,13 +50,13 @@ const char gcode_program[] PROGMEM =
   "G0 X0 Y-150\n"           // Rapid move to bottom of circle
   "G3 X0 Y-150 I0 J150\n"   // Full CCW circle (center offset: 0, +150 from bottom)
 
-  // Left eye: vertical line
+  // Left eye: vertical line (pure Y direction for accuracy)
   "G0 X-45 Y50\n"           // Rapid move to top of left eye
-  "G1 X-45 Y20\n"           // Draw line downward
+  "G1 X-45 Y20\n"           // Draw line downward (pure Y, uses M2+M3)
 
-  // Right eye: vertical line
+  // Right eye: vertical line (pure Y direction for accuracy)
   "G0 X45 Y50\n"            // Rapid move to top of right eye
-  "G1 X45 Y20\n"            // Draw line downward
+  "G1 X45 Y20\n"            // Draw line downward (pure Y, uses M2+M3)
 
   // Mouth: smile arc (CCW from left to right, curving down)
   // Arc center at (0, 20), radius ~64mm

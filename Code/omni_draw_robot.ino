@@ -297,7 +297,7 @@ void applyWheelSpeeds(float *w) {
 void driveVelocity(float vx, float vy) {
   float w[3];
   inverseKinematics(vx, vy, w);
-  // Normalize so fastest wheel runs at SPEED
+  // Normalize so fastest wheel runs at SPEED (full power for circles)
   float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
   if (peak > 0.001f) {
     float s = (float)SPEED / peak;
@@ -403,15 +403,33 @@ void penDown() {
 //  The robot's odometry resets between moves, but the G-code
 //  state (gcX, gcY) tracks cumulative absolute position.
 //
-//  IMPORTANT: All moves are broken into two axis-aligned steps
-//  (X first, then Y) instead of moving diagonally. Diagonal
-//  moves at non-45-degree angles cause the robot to rotate
-//  because it has no IMU to correct heading drift. Moving in
-//  only one axis at a time avoids this problem.
+//  IMPORTANT: Diagonal moves cause the robot to rotate because
+//  it has no IMU to correct heading drift. Pure X is worst
+//  (only M1 does real work). Pure Y is best (M2 + M3 equal).
+//
+//  To avoid this, all moves are decomposed into two directions
+//  that each engage exactly 2 wheels symmetrically:
+//
+//    Step 1: Move at 30° from X-axis (60° from Y)
+//            → engages M1 + M3 equally, M2 idle
+//    Step 2: Move in pure Y
+//            → engages M2 + M3 equally, M1 idle
+//
+//  These two directions span the full 2D plane and both use
+//  2 wheels driving equally, which prevents twisting.
+//
+//  Math: any (dx, dy) = a*(cos30°, sin30°) + b*(0, 1)
+//        a = dx / cos30°  (covers all of dx, plus some dy)
+//        b = dy - a*sin30° (covers remaining dy)
 // ============================================================
 
-// Low-level single-axis move helper (does NOT split into axes)
-// Used by arc segments where moves are small enough that rotation is minimal
+// cos(30°) and sin(30°) — the 30° direction unit vector
+#define COS30 0.8660254f
+#define SIN30 0.5f
+
+// Low-level direct move helper (does NOT split into 2-wheel directions)
+// Used by arc segments where moves are small enough (~10mm) that
+// rotation is minimal, and splitting would make arcs jagged
 void gcMoveToRaw(float absX, float absY) {
   float dx = absX - gcX;
   float dy = absY - gcY;
@@ -427,8 +445,8 @@ void gcMoveToRaw(float absX, float absY) {
   gcX = absX; gcY = absY;
 }
 
-// L-shaped move: moves in X first, then Y (never diagonal)
-// This prevents heading drift that happens with non-45-degree diagonal moves
+// 2-wheel decomposed move: 30° direction first, then pure Y
+// Both legs engage exactly 2 wheels symmetrically to prevent twisting
 void gcMoveTo(float absX, float absY) {
   float dx = absX - gcX;
   float dy = absY - gcY;
@@ -439,19 +457,32 @@ void gcMoveTo(float absX, float absY) {
     return;
   }
 
-  // Step 1: Move in X only (if needed)
+  // Step 1: Move at 30° from X-axis to cover all of dx
+  // Direction (cos30°, sin30°) engages M1 + M3 equally, M2 is idle
+  // a = dx / cos30° gives us the distance along the 30° direction
+  // This move covers all of dx and also covers (a * sin30°) of dy
   if (fabsf(dx) >= 0.5f) {
+    float a = dx / COS30;          // Distance along 30° direction
+    float moveX = dx;              // = a * cos30° (all of dx)
+    float moveY = a * SIN30;       // Partial dy covered by this leg
     resetOdometry();
-    moveTo(dx, 0);          // Pure X move — no Y component
-    gcX = absX;             // Update X position
+    moveTo(moveX, moveY);
+    gcX += moveX;
+    gcY += moveY;
+    dy = absY - gcY;              // Recalculate remaining Y distance
   }
 
-  // Step 2: Move in Y only (if needed)
+  // Step 2: Move in pure Y to cover remaining dy
+  // Pure Y engages M2 + M3 equally, M1 is idle
   if (fabsf(dy) >= 0.5f) {
     resetOdometry();
-    moveTo(0, dy);          // Pure Y move — no X component
-    gcY = absY;             // Update Y position
+    moveTo(0, dy);                // Pure Y — no X component
+    gcY = absY;
   }
+
+  // Ensure exact final position (floating point cleanup)
+  gcX = absX;
+  gcY = absY;
 }
 
 // ============================================================

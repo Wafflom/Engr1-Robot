@@ -402,10 +402,18 @@ void penDown() {
 //  Converts absolute G-code coordinates to a relative PID move.
 //  The robot's odometry resets between moves, but the G-code
 //  state (gcX, gcY) tracks cumulative absolute position.
+//
+//  IMPORTANT: All moves are broken into two axis-aligned steps
+//  (X first, then Y) instead of moving diagonally. Diagonal
+//  moves at non-45-degree angles cause the robot to rotate
+//  because it has no IMU to correct heading drift. Moving in
+//  only one axis at a time avoids this problem.
 // ============================================================
 
-void gcMoveTo(float absX, float absY) {
-  float dx = absX - gcX;   // Delta from current absolute position
+// Low-level single-axis move helper (does NOT split into axes)
+// Used by arc segments where moves are small enough that rotation is minimal
+void gcMoveToRaw(float absX, float absY) {
+  float dx = absX - gcX;
   float dy = absY - gcY;
 
   // Skip tiny moves (less than 0.5mm)
@@ -414,9 +422,36 @@ void gcMoveTo(float absX, float absY) {
     return;
   }
 
-  resetOdometry();          // Zero out local position
-  moveTo(dx, dy);           // PID move by the delta
-  gcX = absX; gcY = absY;   // Update absolute tracker
+  resetOdometry();
+  moveTo(dx, dy);
+  gcX = absX; gcY = absY;
+}
+
+// L-shaped move: moves in X first, then Y (never diagonal)
+// This prevents heading drift that happens with non-45-degree diagonal moves
+void gcMoveTo(float absX, float absY) {
+  float dx = absX - gcX;
+  float dy = absY - gcY;
+
+  // Skip tiny moves
+  if (fabsf(dx) < 0.5f && fabsf(dy) < 0.5f) {
+    gcX = absX; gcY = absY;
+    return;
+  }
+
+  // Step 1: Move in X only (if needed)
+  if (fabsf(dx) >= 0.5f) {
+    resetOdometry();
+    moveTo(dx, 0);          // Pure X move — no Y component
+    gcX = absX;             // Update X position
+  }
+
+  // Step 2: Move in Y only (if needed)
+  if (fabsf(dy) >= 0.5f) {
+    resetOdometry();
+    moveTo(0, dy);          // Pure Y move — no X component
+    gcY = absY;             // Update Y position
+  }
 }
 
 // ============================================================
@@ -503,15 +538,17 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   penDown();
 
   // Move through each segment point on the arc
+  // Uses gcMoveToRaw (direct diagonal) because arc segments are small (~10mm)
+  // and L-shaped moves would make the arc jagged
   for (int s = 1; s <= numSegs; s++) {
     float frac = (float)s / (float)numSegs;
     float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
     float px = cx + radius * cosf(ang);
     float py = cy + radius * sinf(ang);
-    gcMoveTo(px, py);
+    gcMoveToRaw(px, py);
   }
 
-  gcMoveTo(endX, endY);  // Ensure we end exactly at the target
+  gcMoveToRaw(endX, endY);  // Ensure we end exactly at the target
 }
 
 // ============================================================
@@ -698,23 +735,45 @@ void setup() {
   // Calibrate encoders
   calibrateEncoders();
 
-  // Wait for button press (button wired to GND, pin pulled HIGH internally)
+  // Configure start button (wired to GND, uses internal pullup)
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  Serial.println(F("Press button to start..."));
-  while (digitalRead(BUTTON_PIN) == HIGH) { delay(10); }
-  delay(200);  // Debounce
-  Serial.println(F("GO!"));
 
-  // Reset G-code state and run the program
-  gcX = 0; gcY = 0;
-  runGCodeProgram(gcode_program);
-
-  // Done
-  stopAll();
-  penUp();
-  Serial.println(F("\nDone! Reset to repeat."));
+  Serial.println(F("Press button to start drawing..."));
 }
 
-// Nothing in loop — drawing runs once from setup.
-// Press Arduino reset button to draw again.
-void loop() { }
+// ============================================================
+//  LOOP — waits for button press, draws, then waits again
+//
+//  After each drawing completes, the robot is ready for another
+//  button press. No need to reset the Arduino between drawings.
+//  The G-code state resets each time so the robot draws from
+//  wherever it currently sits (that position becomes the new origin).
+// ============================================================
+
+void loop() {
+  // Wait for button press (pin reads LOW when pressed)
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    delay(200);  // Debounce — ignore contact bounce from the switch
+
+    Serial.println(F("GO!"));
+
+    // Reset G-code state — current position becomes the new origin (0,0)
+    gcX = 0;
+    gcY = 0;
+    penIsDown = false;   // Ensure pen state is clean
+    penServo.write(PEN_UP_ANGLE);  // Make sure pen is up
+
+    // Run the G-code program
+    runGCodeProgram(gcode_program);
+
+    // Drawing complete
+    stopAll();
+    penUp();
+    Serial.println(F("\nDone! Press button to draw again..."));
+
+    // Wait for button to be released before accepting another press
+    // This prevents accidental double-triggers
+    while (digitalRead(BUTTON_PIN) == LOW) { delay(10); }
+    delay(200);  // Debounce the release
+  }
+}

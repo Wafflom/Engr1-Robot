@@ -39,15 +39,15 @@
 #define PEN_SETTLE_MS   300
 
 // ---- PID ----
-#define KP  2.5f
-#define KI  0.3f
-#define KD  0.5f
+#define KP  4.0f
+#define KI  0.5f
+#define KD  0.3f
 
 // ---- MOTION ----
 #define LOOP_MS       10
 #define POS_TOL_MM    1.5f
 #define MAX_PWM       240
-#define DEADBAND      130
+#define MIN_PWM       150     // minimum PWM that actually moves motors under load
 #define INTEGRAL_CAP  200.0f
 
 // ---- STAR ----
@@ -83,12 +83,18 @@ ISR(PCINT0_vect) {
 
 // ---- MOTOR HELPERS ----
 void driveMotor(uint8_t idx, float pwm) {
-  if (fabsf(pwm) < DEADBAND) {
+  if (fabsf(pwm) < 10) {
+    // PID says basically zero — release motor completely
     mot[idx]->setSpeed(0);
     mot[idx]->run(RELEASE);
     return;
   }
-  mot[idx]->setSpeed((uint8_t)min(fabsf(pwm), (float)MAX_PWM));
+  // If PID wants movement, ensure at least MIN_PWM so motor
+  // actually turns instead of just whining
+  float absPwm = fabsf(pwm);
+  if (absPwm < MIN_PWM) absPwm = MIN_PWM;
+  if (absPwm > MAX_PWM) absPwm = MAX_PWM;
+  mot[idx]->setSpeed((uint8_t)absPwm);
   mot[idx]->run(pwm > 0 ? FORWARD : BACKWARD);
 }
 

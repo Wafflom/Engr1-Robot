@@ -41,7 +41,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | Encoders | Magnetic, 12 PPR (600 ticks/rev after gearing) |
 | Pen Servo | SG90 Micro Servo |
 | Wheels | 36 mm diameter omni-wheels |
-| Robot Radius | 60 mm (center to wheel contact) |
+| Robot Radius | 88 mm (center to wheel contact) |
 
 ---
 

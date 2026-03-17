@@ -97,7 +97,7 @@ float kd_curve = 1.5;
 float ki_curve = 20.0;
 
 // PWM minimum (to overcome min reuired power to actually move)
-int minPWM = 30;     // Minimum PWM to overcome motor dead zone (adjustable)
+int minPWM = 50;     // Minimum PWM to overcome motor dead zone (adjustable)
 
 // Active PID gains (set before each move)
 float kp, kd, ki;

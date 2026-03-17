@@ -16,7 +16,6 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 - [Assembly](#assembly)
 - [Software Setup](#software-setup)
 - [Usage](#usage)
-- [Serial Commands](#serial-commands)
 - [License](#license)
 
 ---
@@ -28,8 +27,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 - **Magnetic encoder feedback** — quadrature Hall-effect encoders on each motor (600 ticks/revolution)
 - **Pen lift servo** — SG90 micro servo raises and lowers a pen for drawing
 - **PROGMEM drawing storage** — coordinate paths stored in flash memory to conserve SRAM
-- **Serial command interface** — manual control and debugging at 115200 baud
-- **Button start with LED indicators** — push to draw, red LED while active, green LED when done
+- **Button start** — press to draw
 
 ---
 
@@ -57,8 +55,6 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | 3 | 36 mm omni-wheels | Press-fit onto motor shafts |
 | 1 | SG90 micro servo | For pen lift mechanism |
 | 1 | Momentary pushbutton | Normally open |
-| 1 | Red LED + 220 ohm resistor | Drawing indicator |
-| 1 | Green LED + 220 ohm resistor | Complete indicator |
 | — | Jumper wires, mounting hardware | As needed |
 
 ---
@@ -78,9 +74,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | D7 | Encoder 3 Hall B | Motor 3 encoder (rear-right) | Digital read for direction |
 | D8 | Encoder 3 Hall A | Motor 3 encoder (rear-right) | Pin-change interrupt PCINT0 |
 | D10 | Servo PWM | SG90 pen servo | Via Motor Shield Servo 1 header |
-| D11 | Red LED | LED + 220 ohm → GND | ON while drawing |
 | D12 | Start button | Pushbutton → GND | INPUT_PULLUP, active LOW |
-| D13 | Green LED | LED + 220 ohm → GND | ON when drawing complete |
 | A4 (SDA) | I2C data | Motor Shield V2 | Shared I2C bus |
 | A5 (SCL) | I2C clock | Motor Shield V2 | Shared I2C bus |
 
@@ -127,7 +121,7 @@ General steps:
 5. Wire encoder signals to the Arduino pins as shown above
 6. Mount the SG90 servo for the pen lift mechanism
 7. Connect the servo to the "Servo 1" header on the Motor Shield
-8. Wire the button, LEDs, and resistors on a small breadboard or perfboard
+8. Wire the button on a small breadboard or perfboard
 
 ---
 
@@ -154,31 +148,15 @@ See [`Code/README.md`](Code/README.md) for detailed firmware documentation, func
 
 ## Usage
 
-1. Power on the Arduino — the serial monitor prints `READY`
+1. Power on the Arduino
 2. Place the robot on a flat surface with paper underneath
 3. Insert a pen or marker into the pen holder
-4. **Press the button** or send `D` via serial to start drawing
-5. The red LED turns on while drawing
-6. When finished, the robot returns to its starting position, the red LED turns off, and the green LED turns on
+4. **Press the button** to start drawing
+5. When finished, the robot returns to its starting position
 
 ### Default Drawing
 
 The robot draws **"HELLO"** in block letters (~276 mm wide x 90 mm tall, fits within a 300 x 300 mm area). Custom drawings can be created by modifying `Code/hello_drawing.h`.
-
----
-
-## Serial Commands
-
-Connect at **115200 baud**. Available commands:
-
-| Command | Action |
-|---------|--------|
-| `D` | Start the drawing sequence |
-| `G X Y` | Move to position (X, Y) in mm |
-| `PU` | Pen up (lift) |
-| `PD` | Pen down (lower) |
-| `H` | Home — reset position to (0, 0) |
-| `?` | Print current position |
 
 ---
 

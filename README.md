@@ -63,11 +63,46 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 
 ---
 
-## Wiring Diagram
+## Wiring Schematic
 
-Full system wiring showing all connections between the Arduino, encoders, Motor Shield, servo, LEDs, and button.
+![Wiring Schematic](images/wiring-diagram.svg)
 
-![Wiring Diagram](images/wiring-diagram.svg)
+### Pin Reference Table
+
+| Arduino Pin | Function | Connects To | Notes |
+|-------------|----------|-------------|-------|
+| D2 | Encoder 1 Hall A | Motor 1 encoder (front) | Hardware interrupt INT0, rising edge |
+| D3 | Encoder 2 Hall A | Motor 2 encoder (rear-left) | Hardware interrupt INT1, rising edge |
+| D4 | Encoder 1 Hall B | Motor 1 encoder (front) | Digital read for direction |
+| D5 | Encoder 2 Hall B | Motor 2 encoder (rear-left) | Digital read for direction |
+| D7 | Encoder 3 Hall B | Motor 3 encoder (rear-right) | Digital read for direction |
+| D8 | Encoder 3 Hall A | Motor 3 encoder (rear-right) | Pin-change interrupt PCINT0 |
+| D10 | Servo PWM | SG90 pen servo | Via Motor Shield Servo 1 header |
+| D11 | Red LED | LED + 220 ohm → GND | ON while drawing |
+| D12 | Start button | Pushbutton → GND | INPUT_PULLUP, active LOW |
+| D13 | Green LED | LED + 220 ohm → GND | ON when drawing complete |
+| A4 (SDA) | I2C data | Motor Shield V2 | Shared I2C bus |
+| A5 (SCL) | I2C clock | Motor Shield V2 | Shared I2C bus |
+
+### Motor Shield Connections
+
+| Terminal | Motor | Position |
+|----------|-------|----------|
+| M1 | N20 DC motor + encoder | Front (90°) |
+| M2 | N20 DC motor + encoder | Rear-left (210°) |
+| M3 | N20 DC motor + encoder | Rear-right (330°) |
+| VIN / GND | 6V power supply | Motor power input |
+
+### Encoder Wiring (each motor, 6 wires)
+
+| Wire | Color (typical) | Connects To |
+|------|----------------|-------------|
+| Motor + | Red | Motor Shield M terminal |
+| Motor - | Black | Motor Shield M terminal |
+| Encoder VCC | — | Arduino 5V rail |
+| Encoder GND | — | Arduino GND rail |
+| Hall Sensor A | — | See pin table (interrupt pin) |
+| Hall Sensor B | — | See pin table (direction pin) |
 
 ---
 

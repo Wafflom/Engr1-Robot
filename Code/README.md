@@ -39,10 +39,10 @@ All tunable values are `#define` constants near the top of `omni_draw_robot.ino`
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `ENCODER_CPR` | 350.0 | Encoder counts per wheel revolution (7 rising edges x 50:1 gear) |
+| `ENCODER_CPR` | 700.0 | Encoder counts per wheel revolution (14 CPR x 50:1 gear) |
 | `WHEEL_DIA_MM` | 36.0 | Outer diameter of the omni-wheels in mm |
 | `ROBOT_RADIUS_MM` | 88.0 | Distance from robot center to wheel contact point in mm |
-| `MM_PER_TICK` | 0.323 | Linear distance per encoder tick: (pi x 36) / 350 |
+| `MM_PER_TICK` | 0.1614 | Linear distance per encoder tick: (pi x 36) / 700 |
 
 ### Servo
 
@@ -372,7 +372,7 @@ If the robot isn't drawing accurately, adjust these parameters:
 ### Drawing is scaled wrong
 
 - Measure your actual wheel diameter and update `WHEEL_DIA_MM`
-- Verify `ENCODER_CPR` matches your encoder (7 rising edges x gear ratio for RISING interrupt)
+- Verify `ENCODER_CPR` matches your encoder (14 CPR x gear ratio)
 
 ### Pen doesn't lift cleanly / drags
 

@@ -27,9 +27,9 @@
 #define SERVO_PIN 10
 
 // ---- PHYSICAL ----
-// Encoder: 7 pole pairs = 7 rising edges per motor rev (RISING interrupt)
-// Gear ratio 1:50 → 7 * 50 = 350 ticks per wheel revolution
-#define ENCODER_CPR   350.0f
+// Encoder: 7 pole pairs = 14 edges per motor rev (CHANGE interrupt)
+// Gear ratio 1:50 → 14 * 50 = 700 ticks per wheel revolution
+#define ENCODER_CPR   700.0f
 #define WHEEL_DIA_MM  36.0f
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
@@ -70,15 +70,15 @@ float peX = 0, peY = 0;
 unsigned long lastLoop = 0;
 
 // ---- ENCODER ISRs ----
-void isr1() { encTicks[0] += digitalRead(ENC1_B) ? -1 : 1; }
-void isr2() { encTicks[1] += digitalRead(ENC2_B) ? -1 : 1; }
+// CHANGE mode: fires on both rising AND falling edges of channel A.
+// Direction: if A==B → count up, if A!=B → count down.
+// Auto-calibration at startup corrects the sign if needed.
+void isr1() { encTicks[0] += (digitalRead(ENC1_A) == digitalRead(ENC1_B)) ? 1 : -1; }
+void isr2() { encTicks[1] += (digitalRead(ENC2_A) == digitalRead(ENC2_B)) ? 1 : -1; }
 
-volatile uint8_t enc3_prevA = 0;
+// Encoder 3: pin-change interrupt already fires on both edges.
 ISR(PCINT0_vect) {
-  uint8_t a = digitalRead(ENC3_A);
-  if (a && !enc3_prevA)
-    encTicks[2] += digitalRead(ENC3_B) ? -1 : 1;
-  enc3_prevA = a;
+  encTicks[2] += (digitalRead(ENC3_A) == digitalRead(ENC3_B)) ? 1 : -1;
 }
 
 // ---- MOTOR HELPERS ----
@@ -344,10 +344,10 @@ void setup() {
   pinMode(ENC3_A, INPUT_PULLUP);
   pinMode(ENC3_B, INPUT_PULLUP);
 
-  // Encoder interrupts
-  attachInterrupt(digitalPinToInterrupt(ENC1_A), isr1, RISING);
-  attachInterrupt(digitalPinToInterrupt(ENC2_A), isr2, RISING);
-  enc3_prevA = digitalRead(ENC3_A);
+  // Encoder interrupts — CHANGE mode for full 14 CPR
+  attachInterrupt(digitalPinToInterrupt(ENC1_A), isr1, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC2_A), isr2, CHANGE);
+  // Encoder 3: pin-change interrupt fires on both edges already
   PCICR  |= (1 << PCIE0);
   PCMSK0 |= (1 << PCINT0);
 

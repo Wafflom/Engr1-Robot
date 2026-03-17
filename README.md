@@ -24,7 +24,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 
 - **Holonomic drive** — moves in any direction without rotating, using 3 omni-wheels at 120-degree intervals
 - **PID position control** — closed-loop feedback at 100 Hz for accurate movement (within 0.8 mm)
-- **Magnetic encoder feedback** — Hall-effect encoders on each motor (350 ticks/revolution after gearing)
+- **Magnetic encoder feedback** — Hall-effect encoders on each motor (700 ticks/revolution after gearing)
 - **Pen lift servo** — SG90 micro servo raises and lowers a pen for drawing
 - **PROGMEM drawing storage** — coordinate paths stored in flash memory to conserve SRAM
 - **Button start** — press to draw
@@ -38,7 +38,7 @@ The robot uses three omni-wheels arranged 120 degrees apart, allowing it to slid
 | Microcontroller | Arduino Uno R3 (ATmega328P, 16 MHz) |
 | Motor Driver | Adafruit Motor Shield V2 (I2C) |
 | Motors | 3x Adafruit N20 DC Motors, 6V, 1:50 gear ratio |
-| Encoders | Magnetic, 7 pole pairs (350 ticks/rev after 1:50 gearing) |
+| Encoders | Magnetic, 14 CPR (700 ticks/rev after 1:50 gearing) |
 | Pen Servo | SG90 Micro Servo |
 | Wheels | 36 mm diameter omni-wheels |
 | Robot Radius | 88 mm (center to wheel contact) |

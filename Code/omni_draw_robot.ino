@@ -301,8 +301,22 @@ void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
 void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 
 // Convert float wheel speeds to direction + PWM and send to motors
+#define MIN_PWM 50   // Minimum PWM to overcome motor dead zone
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
+
+  // Find the smallest active wheel speed to scale proportionally
+  float minActive = 999;
+  for (uint8_t i = 0; i < 3; i++) {
+    float a = fabs(w[i]);
+    if (a >= 5 && a < minActive) minActive = a;
+  }
+  // If any active wheel is below MIN_PWM, scale all wheels up to preserve direction
+  if (minActive < MIN_PWM && minActive >= 5) {
+    float scale = (float)MIN_PWM / minActive;
+    for (uint8_t i = 0; i < 3; i++) w[i] *= scale;
+  }
+
   for (uint8_t i = 0; i < 3; i++) {
     int pwr = (int)fabs(w[i]);       // Power = absolute value
     if (pwr > 255) pwr = 255;        // Cap at max PWM

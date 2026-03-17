@@ -467,11 +467,15 @@ void gcMoveToRaw(float absX, float absY, bool chain) {
   if (chain) {
     // Pass through — loose tolerance, don't stop motors
     moveTo(dx, dy, arcChainTol, false);
+    // Update gcX/gcY to actual position (not ideal target)
+    // so the next segment aims from where we really are
+    gcX += posX;
+    gcY += posY;
   } else {
     // Final point — tight tolerance, full stop
     moveTo(dx, dy, POS_TOL_MM, true);
+    gcX = absX; gcY = absY;
   }
-  gcX = absX; gcY = absY;
 }
 
 // 2-wheel decomposed move: 30° direction first, then pure Y

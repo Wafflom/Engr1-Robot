@@ -96,6 +96,9 @@ float kp_curve = 60.0;
 float kd_curve = 5.0;
 float ki_curve = 15.0;
 
+// minimum PWM
+int minPWM = 60; // minimum motor power to overcome friction and actually have motor move
+
 // Active PID gains (set before each move)
 float kp, kd, ki;
 

@@ -88,6 +88,7 @@ float ki = 10.0;   // Overcomes motor stiction
 #define MOVE_TIMEOUT_MS   8000UL   // Max time per move before giving up (ms)
 #define POS_TOL_MM        3.0f     // Arrival tolerance (mm)
 #define SPEED             255      // Full PWM for open-loop circle drawing
+#define MAX_PID_PWM       180      // Cap PID motor power for smoother travel (0-255)
 
 // -- Arc parameters --
 #define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
@@ -281,11 +282,12 @@ void inverseKinematics(float vx, float vy, float *w) {
 }
 
 // Convert float wheel speeds to direction + PWM and send to motors
-void applyWheelSpeeds(float *w) {
+// maxPwm caps the motor power (use MAX_PID_PWM for travel, 255 for circles)
+void applyWheelSpeeds(float *w, int maxPwm) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
   for (uint8_t i = 0; i < 3; i++) {
     int pwr = (int)fabs(w[i]);       // Power = absolute value
-    if (pwr > 255) pwr = 255;        // Cap at max PWM
+    if (pwr > maxPwm) pwr = maxPwm;  // Cap at max allowed PWM
     int dir = 1;                      // Assume forward
     if (w[i] < 0) dir = -1;          // Negative = backward
     if (pwr < 5) dir = 0;            // Too small = release
@@ -297,13 +299,13 @@ void applyWheelSpeeds(float *w) {
 void driveVelocity(float vx, float vy) {
   float w[3];
   inverseKinematics(vx, vy, w);
-  // Normalize so fastest wheel runs at SPEED
+  // Normalize so fastest wheel runs at SPEED (full power for circles)
   float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
   if (peak > 0.001f) {
     float s = (float)SPEED / peak;
     w[0] *= s; w[1] *= s; w[2] *= s;
   }
-  applyWheelSpeeds(w);
+  applyWheelSpeeds(w, 255);  // Full speed for circles
 }
 
 // ============================================================
@@ -364,10 +366,10 @@ void moveTo(float targetX, float targetY) {
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
-    // Convert to wheel speeds and drive
+    // Convert to wheel speeds and drive (capped for smoother travel)
     float w[3];
     inverseKinematics(uX, uY, w);
-    applyWheelSpeeds(w);
+    applyWheelSpeeds(w, MAX_PID_PWM);
 
     // Save error for next derivative
     eprevX = eX; eprevY = eY;

@@ -39,17 +39,17 @@ All tunable values are `#define` constants near the top of `omni_draw_robot.ino`
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `ENCODER_CPR` | 600.0 | Encoder counts per wheel revolution (12 PPR x 50:1 gear) |
+| `ENCODER_CPR` | 350.0 | Encoder counts per wheel revolution (7 rising edges x 50:1 gear) |
 | `WHEEL_DIA_MM` | 36.0 | Outer diameter of the omni-wheels in mm |
 | `ROBOT_RADIUS_MM` | 88.0 | Distance from robot center to wheel contact point in mm |
-| `MM_PER_TICK` | 0.1885 | Linear distance per encoder tick: (pi x 36) / 600 |
+| `MM_PER_TICK` | 0.323 | Linear distance per encoder tick: (pi x 36) / 350 |
 
 ### Servo
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `PEN_UP_ANGLE` | 90 | Servo angle when pen is lifted (degrees) |
-| `PEN_DOWN_ANGLE` | 45 | Servo angle when pen touches paper (degrees) |
+| `PEN_UP_ANGLE` | 45 | Servo angle when pen is lifted (degrees) |
+| `PEN_DOWN_ANGLE` | 0 | Servo angle when pen touches paper (degrees) |
 | `PEN_SETTLE_MS` | 250 | Delay after servo move to let it settle (ms) |
 
 ### PID Gains
@@ -372,7 +372,7 @@ If the robot isn't drawing accurately, adjust these parameters:
 ### Drawing is scaled wrong
 
 - Measure your actual wheel diameter and update `WHEEL_DIA_MM`
-- Verify `ENCODER_CPR` matches your encoder (12 PPR x gear ratio)
+- Verify `ENCODER_CPR` matches your encoder (7 rising edges x gear ratio for RISING interrupt)
 
 ### Pen doesn't lift cleanly / drags
 

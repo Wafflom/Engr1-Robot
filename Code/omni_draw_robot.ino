@@ -1,15 +1,8 @@
 /*
- * Omni Robot — Concentric Shapes Demo (Encoder + PID)
- * ====================================================
- * Draws a circle, pentagram star, and hexagon all sharing
- * the same center point.  Encoder feedback with PID position
- * control following the curiores/ArduinoTutorials pattern.
- *
- * Shape data lives in shapes.h (PROGMEM).
- *
- * At startup the robot auto-calibrates encoder polarity by
- * briefly spinning each motor FORWARD and checking which
- * direction the encoder counts.
+ * Omni Robot — Circle + Smiley Face
+ * ===================================
+ * Draws a circle, then a smiley face inside it (two eyes + mouth).
+ * Press button on pin 12 to start. Encoder + PID position control.
  *
  * Hardware:
  *   - Arduino Uno R3
@@ -17,9 +10,7 @@
  *   - 3x N20 DC motors w/ magnetic hall-effect encoders (6V, 1:50)
  *     M1 = front (90°), M2 = rear-left (210°), M3 = rear-right (330°)
  *   - SG90 servo on Shield Servo 1 (pin 10)
- *
- * Encoder: 14 CPR × 50:1 gear = 700 ticks/output-rev
- * Wheel diameter: 36 mm → ~0.1616 mm per tick
+ *   - Push button on pin 12 (pulled high, press = LOW)
  */
 
 #include <Wire.h>
@@ -39,13 +30,14 @@ Servo penServo;
 #define PEN_DOWN_ANGLE  0
 #define PEN_SETTLE_MS   300
 #define SPEED           255
+#define BUTTON_PIN      12
 
 // ---- ENCODER PINS ----
-#define ENC1_A  2    // INT0
+#define ENC1_A  2
 #define ENC1_B  4
-#define ENC2_A  3    // INT1
+#define ENC2_A  3
 #define ENC2_B  5
-#define ENC3_A  8    // PCINT0
+#define ENC3_A  8
 #define ENC3_B  7
 
 // ---- ENCODER / WHEEL MATH ----
@@ -54,14 +46,12 @@ Servo penServo;
 #define MM_PER_TICK   ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
 // ---- PID GAINS ----
-// High kp so it arrives with momentum, kd to damp overshoot,
-// ki to push through if stalled
-float kp = 20.0;
-float kd = 0.4;
-float ki = 5.0;
+float kp = 40.0;
+float kd = 0.5;
+float ki = 10.0;
 
 #define MOVE_TIMEOUT_MS 8000UL
-#define POS_TOL_MM      3.0f      // 3mm tolerance — stops before micro-correcting
+#define POS_TOL_MM      3.0f
 
 // ---- WHEEL GEOMETRY ----
 const float W_ANG[3] = {
@@ -71,46 +61,35 @@ const float W_ANG[3] = {
 };
 float sinW[3], cosW[3];
 
-// ============================================================
-//  ENCODER STATE
-// ============================================================
-
+// ---- ENCODER STATE ----
 volatile int posi[3] = {0, 0, 0};
-
-// Encoder polarity: +1 or -1 per motor (set by auto-calibration)
 int8_t encSign[3] = {1, 1, 1};
 
-// PID state (following tutorial: micros-based timing)
+// ---- PID STATE ----
 long prevT = 0;
-float eprevX = 0;
-float eprevY = 0;
-float eintegralX = 0;
-float eintegralY = 0;
+float eprevX = 0, eprevY = 0;
+float eintegralX = 0, eintegralY = 0;
 
-// Odometry
+// ---- ODOMETRY ----
 float posX = 0.0f, posY = 0.0f;
 int posPrev[3] = {0, 0, 0};
 
-// Path length tracker (for circle)
+// ---- PATH LENGTH (for circles) ----
 float pathLen = 0.0f;
 float prevPathX = 0.0f, prevPathY = 0.0f;
 
 // ============================================================
-//  ENCODER ISRs
-//  Following curiores tutorial pattern exactly:
-//  On RISING edge of A, read B: B high → increment, B low → decrement
+//  ENCODER ISRs (curiores tutorial pattern)
 // ============================================================
 
 void enc1ISR() {
   int b = digitalRead(ENC1_B);
-  if (b > 0) { posi[0]++; }
-  else       { posi[0]--; }
+  if (b > 0) { posi[0]++; } else { posi[0]--; }
 }
 
 void enc2ISR() {
   int b = digitalRead(ENC2_B);
-  if (b > 0) { posi[1]++; }
-  else       { posi[1]--; }
+  if (b > 0) { posi[1]++; } else { posi[1]--; }
 }
 
 volatile uint8_t enc3PrevA = 0;
@@ -118,65 +97,52 @@ ISR(PCINT0_vect) {
   uint8_t a = digitalRead(ENC3_A);
   if (a && !enc3PrevA) {
     int b = digitalRead(ENC3_B);
-    if (b > 0) { posi[2]++; }
-    else       { posi[2]--; }
+    if (b > 0) { posi[2]++; } else { posi[2]--; }
   }
   enc3PrevA = a;
 }
 
 // ============================================================
-//  ODOMETRY — read encoder ticks, convert to mm
+//  ODOMETRY
 // ============================================================
 
 void updateOdometry() {
-  // Atomic read (following tutorial: noInterrupts/interrupts)
   int pos[3];
   noInterrupts();
-  pos[0] = posi[0];
-  pos[1] = posi[1];
-  pos[2] = posi[2];
+  pos[0] = posi[0]; pos[1] = posi[1]; pos[2] = posi[2];
   interrupts();
 
-  // Apply polarity correction and convert to mm displacement
   float d[3];
   for (uint8_t i = 0; i < 3; i++) {
     d[i] = (float)(pos[i] - posPrev[i]) * MM_PER_TICK * encSign[i];
     posPrev[i] = pos[i];
   }
 
-  // Forward kinematics
   posX += (2.0f / 3.0f) * (-sinW[0]*d[0] - sinW[1]*d[1] - sinW[2]*d[2]);
   posY += (2.0f / 3.0f) * ( cosW[0]*d[0] + cosW[1]*d[1] + cosW[2]*d[2]);
 }
 
 void resetOdometry() {
   noInterrupts();
-  posPrev[0] = posi[0];
-  posPrev[1] = posi[1];
-  posPrev[2] = posi[2];
+  posPrev[0] = posi[0]; posPrev[1] = posi[1]; posPrev[2] = posi[2];
   interrupts();
-  posX = 0.0f;
-  posY = 0.0f;
+  posX = 0.0f; posY = 0.0f;
 }
 
 void resetPathLength() {
   pathLen = 0.0f;
-  prevPathX = posX;
-  prevPathY = posY;
+  prevPathX = posX; prevPathY = posY;
 }
 
 void updatePathLength() {
   float dx = posX - prevPathX;
   float dy = posY - prevPathY;
   pathLen += sqrtf(dx * dx + dy * dy);
-  prevPathX = posX;
-  prevPathY = posY;
+  prevPathX = posX; prevPathY = posY;
 }
 
 // ============================================================
-//  MOTOR CONTROL
-//  Following curiores tutorial: setMotor(dir, pwmVal, ...)
-//  Adapted for Adafruit Motor Shield (no separate PWM/IN pins)
+//  MOTOR CONTROL (curiores tutorial pattern)
 // ============================================================
 
 void stopAll() {
@@ -201,17 +167,7 @@ void inverseKinematics(float vx, float vy, float *w) {
     w[i] = -sinW[i] * vx + cosW[i] * vy;
 }
 
-// Drive open-loop at full speed in direction (vx, vy)
-void driveVelocity(float vx, float vy) {
-  float w[3];
-  inverseKinematics(vx, vy, w);
-
-  float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
-  if (peak > 0.001f) {
-    float s = (float)SPEED / peak;
-    w[0] *= s;  w[1] *= s;  w[2] *= s;
-  }
-
+void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
   for (uint8_t i = 0; i < 3; i++) {
     int pwr = (int)fabs(w[i]);
@@ -223,86 +179,59 @@ void driveVelocity(float vx, float vy) {
   }
 }
 
+void driveVelocity(float vx, float vy) {
+  float w[3];
+  inverseKinematics(vx, vy, w);
+  float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
+  if (peak > 0.001f) {
+    float s = (float)SPEED / peak;
+    w[0] *= s; w[1] *= s; w[2] *= s;
+  }
+  applyWheelSpeeds(w);
+}
+
 // ============================================================
-//  PID MOVE TO
-//
-//  Following curiores tutorial pattern exactly:
-//  - micros() for deltaT
-//  - error = target - current (in mm, since we have XY odometry)
-//  - u = kp*e + kd*dedt + ki*eintegral
-//  - pwr = fabs(u), clamped to 255
-//  - dir from sign of u
-//  - No anti-windup, no deadband, no boost
-//  - Loop runs as fast as possible (no fixed interval)
+//  PID MOVE TO (curiores tutorial pattern)
 // ============================================================
 
 void moveTo(float targetX, float targetY) {
-  eprevX = 0;
-  eprevY = 0;
-  eintegralX = 0;
-  eintegralY = 0;
+  eprevX = 0; eprevY = 0;
+  eintegralX = 0; eintegralY = 0;
   prevT = micros();
 
   unsigned long deadline = millis() + MOVE_TIMEOUT_MS;
 
   while (true) {
-    // time difference (following tutorial exactly)
     long currT = micros();
     float deltaT = ((float)(currT - prevT)) / 1.0e6;
     prevT = currT;
 
-    // update position from encoders
     updateOdometry();
 
-    // error
     float eX = targetX - posX;
     float eY = targetY - posY;
     float dist = sqrtf(eX * eX + eY * eY);
 
-    // arrived?
-    if (dist < POS_TOL_MM) {
-      stopAll();
-      break;
-    }
-
-    // timeout?
+    if (dist < POS_TOL_MM) { stopAll(); break; }
     if (millis() >= deadline) {
-      Serial.print(F("timeout pos="));
-      Serial.print(posX); Serial.print(F(",")); Serial.println(posY);
-      stopAll();
-      break;
+      Serial.print(F("timeout pos=")); Serial.print(posX);
+      Serial.print(F(",")); Serial.println(posY);
+      stopAll(); break;
     }
 
-    // derivative
     float dedtX = (eX - eprevX) / deltaT;
     float dedtY = (eY - eprevY) / deltaT;
-
-    // integral
     eintegralX = eintegralX + eX * deltaT;
     eintegralY = eintegralY + eY * deltaT;
 
-    // control signal
     float uX = kp * eX + kd * dedtX + ki * eintegralX;
     float uY = kp * eY + kd * dedtY + ki * eintegralY;
 
-    // convert to wheel speeds via inverse kinematics
     float w[3];
     inverseKinematics(uX, uY, w);
+    applyWheelSpeeds(w);
 
-    // apply to motors (following tutorial: fabs for power, sign for direction)
-    Adafruit_DCMotor *motors[3] = {m1, m2, m3};
-    for (uint8_t i = 0; i < 3; i++) {
-      int pwr = (int)fabs(w[i]);
-      if (pwr > 255) pwr = 255;
-      int dir = 1;
-      if (w[i] < 0) dir = -1;
-      if (pwr < 5) dir = 0;
-      setMotor(motors[i], dir, pwr);
-    }
-
-    // store previous error
-    eprevX = eX;
-    eprevY = eY;
+    eprevX = eX; eprevY = eY;
   }
 }
 
@@ -314,18 +243,16 @@ void penUp()   { penServo.write(PEN_UP_ANGLE);   delay(PEN_SETTLE_MS); }
 void penDown() { penServo.write(PEN_DOWN_ANGLE);  delay(PEN_SETTLE_MS); }
 
 // ============================================================
-//  CIRCLE (procedural — continuous velocity sweep)
-//  Tracks arc length via encoders, advances angle θ = arc/R.
+//  DRAW CIRCLE (open-loop velocity sweep, encoder distance)
+//  Draws a circle of given radius, starting from bottom.
+//  Assumes robot is already at center before calling.
 // ============================================================
 
-void drawCircle() {
-  Serial.println(F("Circle"));
-
-  // Travel: center → bottom of circle
+void drawCircleAt(float cx, float cy, float radius, unsigned long timeout) {
+  // Move from wherever we are to the bottom of the circle
   resetOdometry();
-  moveTo(0, -RADIUS_MM);
+  moveTo(cx, cy - radius);
 
-  // Pen down, draw circle
   penDown();
   resetOdometry();
   resetPathLength();
@@ -336,12 +263,11 @@ void drawCircle() {
   while (theta < 2.0f * PI) {
     driveVelocity(cosf(theta), sinf(theta));
     delay(1);
-
     updateOdometry();
     updatePathLength();
-    theta = pathLen / RADIUS_MM;
+    theta = pathLen / radius;
 
-    if (millis() - t0 > CIRCLE_TIMEOUT_MS) {
+    if (millis() - t0 > timeout) {
       Serial.println(F("circle timeout"));
       break;
     }
@@ -350,67 +276,83 @@ void drawCircle() {
   stopAll();
   penUp();
 
-  // Travel: bottom of circle → center
+  // Return to circle center
   resetOdometry();
-  moveTo(0, RADIUS_MM);
+  moveTo(-cx, -(cy - radius));
 }
 
 // ============================================================
-//  GENERIC POLYGON DRAWER
-//  Reads segment directions from PROGMEM (shapes.h).
-//  Uses PID moveTo() for each vertex.
+//  DRAW MOUTH (line segments through PROGMEM points)
+//  Moves to first point pen-down, then traces through all.
 // ============================================================
 
-void drawPolygon(const float segments[][2], uint8_t numSides,
-                 float seg_mm, const __FlashStringHelper *name) {
-  Serial.println(name);
+void drawMouth() {
+  Serial.println(F("Mouth"));
 
-  // Travel: center → vertex 0 (straight up)
+  // Move to first mouth point
+  float firstX = pgm_read_float(&mouth_pts[0][0]);
+  float firstY = pgm_read_float(&mouth_pts[0][1]);
   resetOdometry();
-  moveTo(0, RADIUS_MM);
+  moveTo(firstX, firstY);
 
-  // Pen down, draw all sides
   penDown();
   resetOdometry();
 
+  // Draw through remaining points relative to first point
   float cumX = 0.0f, cumY = 0.0f;
-  for (uint8_t s = 0; s < numSides; s++) {
-    float dx = pgm_read_float(&segments[s][0]);
-    float dy = pgm_read_float(&segments[s][1]);
-
-    // Normalize direction, scale to segment length
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len > 0.001f) {
-      cumX += (dx / len) * seg_mm;
-      cumY += (dy / len) * seg_mm;
-    }
-
+  for (uint8_t i = 1; i < MOUTH_NUM_PTS; i++) {
+    float px = pgm_read_float(&mouth_pts[i][0]);
+    float py = pgm_read_float(&mouth_pts[i][1]);
+    cumX = px - firstX;
+    cumY = py - firstY;
     moveTo(cumX, cumY);
   }
 
   stopAll();
   penUp();
 
-  // Travel: vertex 0 → center
+  // Return to center: we're at last mouth point
+  float lastX = pgm_read_float(&mouth_pts[MOUTH_NUM_PTS - 1][0]);
+  float lastY = pgm_read_float(&mouth_pts[MOUTH_NUM_PTS - 1][1]);
   resetOdometry();
-  moveTo(0, -RADIUS_MM);
+  moveTo(-lastX, -lastY);
+}
+
+// ============================================================
+//  DRAW SMILEY FACE
+//  From center: outer circle, left eye, right eye, mouth.
+// ============================================================
+
+void drawSmiley() {
+  // 1. Outer circle
+  Serial.println(F("Outer circle"));
+  drawCircleAt(0, 0, RADIUS_MM, CIRCLE_TIMEOUT_MS);
+  delay(200);
+
+  // 2. Left eye (small circle)
+  Serial.println(F("Left eye"));
+  drawCircleAt(-EYE_OFFSET_X, EYE_OFFSET_Y, EYE_RADIUS_MM, EYE_TIMEOUT_MS);
+  delay(200);
+
+  // 3. Right eye (small circle)
+  Serial.println(F("Right eye"));
+  drawCircleAt(EYE_OFFSET_X, EYE_OFFSET_Y, EYE_RADIUS_MM, EYE_TIMEOUT_MS);
+  delay(200);
+
+  // 4. Mouth
+  drawMouth();
 }
 
 // ============================================================
 //  ENCODER AUTO-CALIBRATION
-//  Spins each motor FORWARD, checks encoder direction,
-//  auto-flips polarity if reversed.
 // ============================================================
 
 void calibrateEncoders() {
   Serial.println(F("\n--- Encoder Calibration ---"));
-
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 
   for (uint8_t i = 0; i < 3; i++) {
-    noInterrupts();
-    int before = posi[i];
-    interrupts();
+    noInterrupts(); int before = posi[i]; interrupts();
 
     motors[i]->setSpeed(180);
     motors[i]->run(FORWARD);
@@ -419,29 +361,17 @@ void calibrateEncoders() {
     motors[i]->setSpeed(0);
     delay(100);
 
-    noInterrupts();
-    int after = posi[i];
-    interrupts();
-
+    noInterrupts(); int after = posi[i]; interrupts();
     int delta = after - before;
 
     Serial.print(F("M")); Serial.print(i + 1);
-    Serial.print(F(" FORWARD: ticks="));
-    Serial.print(delta);
+    Serial.print(F(": ")); Serial.print(delta);
 
-    if (delta > 5) {
-      encSign[i] = 1;
-      Serial.println(F("  OK"));
-    } else if (delta < -5) {
-      encSign[i] = -1;
-      Serial.println(F("  REVERSED -> flipped"));
-    } else {
-      encSign[i] = 1;
-      Serial.println(F("  WARNING: no counts!"));
-    }
+    if (delta > 5)       { encSign[i] = 1;  Serial.println(F(" OK")); }
+    else if (delta < -5) { encSign[i] = -1; Serial.println(F(" REVERSED")); }
+    else                 { encSign[i] = 1;  Serial.println(F(" WARNING")); }
   }
-
-  Serial.println(F("--- Calibration Done ---\n"));
+  Serial.println(F("--- Done ---\n"));
 }
 
 // ============================================================
@@ -450,8 +380,7 @@ void calibrateEncoders() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("\n=== Concentric Shapes (Encoder+PID) ==="));
-  Serial.print(F("Radius: ")); Serial.print(RADIUS_MM); Serial.println(F(" mm"));
+  Serial.println(F("\n=== Smiley Face Robot ==="));
 
   for (uint8_t i = 0; i < 3; i++) {
     sinW[i] = sinf(W_ANG[i]);
@@ -475,29 +404,25 @@ void setup() {
   pinMode(ENC3_A, INPUT);
   pinMode(ENC3_B, INPUT);
 
-  // Interrupts (following tutorial: RISING on channel A)
   attachInterrupt(digitalPinToInterrupt(ENC1_A), enc1ISR, RISING);
   attachInterrupt(digitalPinToInterrupt(ENC2_A), enc2ISR, RISING);
-
-  // Pin-change interrupt for encoder 3 (pin 8 = PCINT0)
   enc3PrevA = digitalRead(ENC3_A);
   PCICR  |= (1 << PCIE0);
   PCMSK0 |= (1 << PCINT0);
 
-  // Auto-calibrate encoder polarity
   calibrateEncoders();
 
-  Serial.println(F("Starting in 3s..."));
-  delay(3000);
+  // Button
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.println(F("Press button to start..."));
+  while (digitalRead(BUTTON_PIN) == HIGH) {
+    delay(10);
+  }
+  delay(200);  // debounce
+  Serial.println(F("GO!"));
 
-  // ---- Draw all three shapes ----
-  drawCircle();
-  delay(200);
-
-  drawPolygon(star_segments, STAR_NUM_SIDES, STAR_SEG_MM, F("Star"));
-  delay(200);
-
-  drawPolygon(hex_segments, HEX_NUM_SIDES, HEX_SEG_MM, F("Hexagon"));
+  // Draw!
+  drawSmiley();
 
   stopAll();
   Serial.println(F("\nDone! Reset to repeat."));

@@ -1,14 +1,8 @@
 /*
- * shapes.h — Drawing data for concentric shapes
+ * shapes.h — Smiley face drawing data
  *
- * Stores shape segment directions in PROGMEM so the main sketch
- * stays clean and new shapes can be added by defining new arrays.
- *
- * Each shape is an array of direction vectors (dx, dy) per segment.
- * The main sketch handles distance via encoder + PID control.
- *
- * Shape parameters:
- *   RADIUS_MM — circumscribed circle radius (shared by all shapes)
+ * All coordinates in mm, relative to face center.
+ * RADIUS_MM is the outer circle radius.
  */
 
 #ifndef SHAPES_H
@@ -16,52 +10,32 @@
 
 #include <avr/pgmspace.h>
 
-// Shape size (mm) — shared by all shapes
-#define RADIUS_MM     50.0f
+// Outer circle radius (mm)
+#define RADIUS_MM         50.0f
+#define CIRCLE_TIMEOUT_MS 15000UL
 
-// ============================================================
-//  CIRCLE parameters
-// ============================================================
+// ---- SMILEY FACE PARAMETERS ----
 
-// Circle is handled procedurally (continuous velocity sweep).
-#define CIRCLE_TIMEOUT_MS  15000UL
+// Eyes: small circles drawn procedurally
+#define EYE_RADIUS_MM     5.0f
+#define EYE_OFFSET_X      15.0f   // left/right from center
+#define EYE_OFFSET_Y      12.0f   // above center
+#define EYE_TIMEOUT_MS    5000UL
 
-// ============================================================
-//  STAR (5-pointed pentagram)
-//
-//  Pentagram order: 0→2→4→1→3→0 (skip-1 vertices).
-//  Vertex 0 at top (90°).
-//  Segment length = 2·R·sin(72°) ≈ 1.902·R
-// ============================================================
+// Mouth: arc from left to right, curving downward
+// Arc on circle centered at (0, 2), radius 20mm, from 210° to 330°
+#define MOUTH_NUM_PTS     9
 
-#define STAR_SEG_MM       (1.9021f * RADIUS_MM)
-#define STAR_NUM_SIDES    5
-
-const float star_segments[][2] PROGMEM = {
-  { -0.5878f, -1.8090f },   // v0 → v2
-  {  1.5388f,  1.1180f },   // v2 → v4
-  { -1.9021f,  0.0000f },   // v4 → v1
-  {  1.5388f, -1.1180f },   // v1 → v3
-  { -0.5878f,  1.8090f },   // v3 → v0
-};
-
-// ============================================================
-//  HEXAGON
-//
-//  Regular hexagon, side = circumradius = RADIUS_MM.
-//  Vertex 0 at top (90°), drawn clockwise.
-// ============================================================
-
-#define HEX_SEG_MM        RADIUS_MM
-#define HEX_NUM_SIDES     6
-
-const float hex_segments[][2] PROGMEM = {
-  {  0.8660f, -0.5000f },   // v0 → v1
-  {  0.0000f, -1.0000f },   // v1 → v2
-  { -0.8660f, -0.5000f },   // v2 → v3
-  { -0.8660f,  0.5000f },   // v3 → v4
-  {  0.0000f,  1.0000f },   // v4 → v5
-  {  0.8660f,  0.5000f },   // v5 → v0
+const float mouth_pts[][2] PROGMEM = {
+  { -17.32f,  -8.00f },   // 210°
+  { -14.14f, -12.14f },   // 225°
+  { -10.00f, -15.32f },   // 240°
+  {  -5.18f, -17.32f },   // 255°
+  {   0.00f, -18.00f },   // 270°
+  {   5.18f, -17.32f },   // 285°
+  {  10.00f, -15.32f },   // 300°
+  {  14.14f, -12.14f },   // 315°
+  {  17.32f,  -8.00f },   // 330°
 };
 
 #endif

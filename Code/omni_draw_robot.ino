@@ -81,20 +81,20 @@ Servo penServo;                             // Pen lift servo
 // kd: derivative — braking to prevent overshoot
 // ki: integral — builds up when stuck to push through friction
 
-// Travel PID (G0): pen up, just get there fast
-float kp_travel = 40.0;
+// Travel PID (G0): pen up, gentle cruise
+float kp_travel = 20.0;
 float kd_travel = 0.5;
-float ki_travel = 10.0;
+float ki_travel = 5.0;
 
 // Straight-line PID (G1): pen down, accuracy matters
-float kp_line = 30.0;
-float kd_line = 1.0;
-float ki_line = 8.0;
+float kp_line = 40.0;
+float kd_line = 0.1;
+float ki_line = 10.0;
 
-// Curve PID (arc segments): small moves, gentle to avoid overshoot
-float kp_curve = 25.0;
+// Curve PID (arc segments): aggressive to push through small segments
+float kp_curve = 80.0;
 float kd_curve = 1.5;
-float ki_curve = 6.0;
+float ki_curve = 20.0;
 
 // Active PID gains (set before each move)
 float kp, kd, ki;

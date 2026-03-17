@@ -115,7 +115,7 @@
 
 // Outer diameter of your omni wheels in millimeters.
 // Measure yours with calipers — this directly affects accuracy!
-#define WHEEL_DIA_MM      48.0f
+#define WHEEL_DIA_MM      36.0f
 
 // Distance from the center of the robot to where each wheel
 // touches the ground, in millimeters.
@@ -124,7 +124,7 @@
 // How many millimeters the robot moves per single encoder tick.
 // This comes from: wheel circumference / ticks per revolution.
 // Circumference = pi × diameter, so:
-//   MM_PER_TICK = (pi × 48) / 600 ≈ 0.2513 mm per tick
+//   MM_PER_TICK = (pi × 36) / 600 ≈ 0.1885 mm per tick
 #define MM_PER_TICK       ((PI * WHEEL_DIA_MM) / ENCODER_CPR)
 
 // --- Servo settings ---
@@ -146,8 +146,8 @@
 // --- Motion settings ---
 #define LOOP_MS           10       // run the control loop every 10 ms (100 Hz)
 #define POS_TOL_MM        0.8f     // if we're within 0.8mm of the target, consider it "arrived"
-#define MAX_PWM           180      // maximum motor power (0-255). lower = slower but more precise
-#define DEADBAND          25       // below this PWM the motors buzz but don't actually turn
+#define MAX_PWM           240      // maximum motor power (0-255). lower = slower but more precise
+#define DEADBAND          130      // below this PWM the motors buzz but don't actually turn (~50%)
 #define INTEGRAL_CAP      300.0f   // limit on the integral term to prevent "windup"
 #define MOVE_TIMEOUT_MS   10000UL  // give up on a move after 10 seconds (safety)
 

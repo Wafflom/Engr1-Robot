@@ -163,7 +163,7 @@ See [`Code/README.md`](Code/README.md) for detailed firmware documentation, func
 
 ### Default Drawing
 
-The robot draws **"HELLO"** in block letters (~92 mm wide x 30 mm tall). Custom drawings can be created by modifying `Code/hello_drawing.h`.
+The robot draws **"HELLO"** in block letters (~276 mm wide x 90 mm tall, fits within a 300 x 300 mm area). Custom drawings can be created by modifying `Code/hello_drawing.h`.
 
 ---
 

@@ -278,7 +278,6 @@ void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
 void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 
 // Convert float wheel speeds to direction + PWM and send to motors
-int minPWM = 60;     // Minimum PWM to overcome motor dead zone (adjustable)
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 
@@ -718,6 +717,8 @@ void setup() {
 
   // Initialize pen servo
   penServo.attach(SERVO_PIN);
+  penDown();
+  delay(100); 
   penUp();
 
   // Configure encoder pins

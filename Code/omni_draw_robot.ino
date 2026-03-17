@@ -66,8 +66,7 @@ Servo penServo;
 #define LOOP_MS         5         // 200 Hz PID loop
 #define POS_TOL_MM      1.0f      // arrival threshold
 #define SETTLE_COUNT    5         // consecutive loops within tolerance
-#define MAX_PWM         240
-#define MIN_PWM         60        // minimum PWM to move (low deadband)
+#define MAX_PWM         255
 #define MOVE_TIMEOUT_MS 8000UL    // safety timeout per segment
 
 // ---- WHEEL GEOMETRY ----
@@ -184,11 +183,7 @@ void stopAll() {
 
 void driveMotor(Adafruit_DCMotor *m, float pwm) {
   if (fabsf(pwm) < 5) { m->setSpeed(0); m->run(RELEASE); return; }
-  // Apply minimum PWM boost to overcome stiction
-  float absPwm = fabsf(pwm);
-  if (absPwm < MIN_PWM) absPwm = MIN_PWM;
-  if (absPwm > MAX_PWM) absPwm = MAX_PWM;
-  m->setSpeed((uint8_t)absPwm);
+  m->setSpeed((uint8_t)min(fabsf(pwm), (float)MAX_PWM));
   m->run(pwm > 0 ? FORWARD : BACKWARD);
 }
 

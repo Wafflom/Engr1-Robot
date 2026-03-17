@@ -34,7 +34,7 @@
  *   5. Remove any commands the robot doesn't support (Z moves, feed rates, etc.)
  *   6. Make sure coordinates are in mm and fit your drawing area
  *
- * CURRENT DRAWING: Smiley face (hexagon outline + line-segment smile)
+ * CURRENT DRAWING: Smiley face (150mm diameter circle)
  */
 
 #ifndef DRAWING_H
@@ -43,39 +43,28 @@
 #include <avr/pgmspace.h>
 
 const char gcode_program[] PROGMEM =
-  // --- Smiley Face (150mm radius hexagon) ---
+  // --- Smiley Face (150mm radius) ---
   // All coordinates in mm, origin = center of face
 
-  // Outer hexagon: 6 vertices at 150mm radius
-  // Vertices at 60° intervals starting from bottom (270°)
-  //   0°: (150, 0)   60°: (75, 130)   120°: (-75, 130)
-  // 180°: (-150, 0)  240°: (-75,-130)  300°: (75, -130)
-  "G0 X75 Y-130\n"            // Rapid to bottom-right vertex (300°)
-  "G1 X150 Y0\n"              // Edge to right (0°)
-  "G1 X75 Y130\n"             // Edge to top-right (60°)
-  "G1 X-75 Y130\n"            // Edge to top-left (120°)
-  "G1 X-150 Y0\n"             // Edge to left (180°)
-  "G1 X-75 Y-130\n"           // Edge to bottom-left (240°)
-  "G1 X75 Y-130\n"            // Edge back to start (300°)
+  // Outer circle: move to bottom, draw full CCW circle
+  "G0 X0 Y-150\n"           // Rapid move to bottom of circle
+  "G3 X0 Y-150 I0 J150\n"   // Full CCW circle (center offset: 0, +150 from bottom)
 
-  // Left eye: vertical line
-  "G0 X-70 Y70\n"             // Rapid to top of left eye
-  "G1 X-70 Y10\n"             // Draw line downward
+  // Left eye: vertical line (pure Y direction for accuracy)
+  "G0 X-70 Y70\n"           // Rapid move to top of left eye
+  "G1 X-70 Y10\n"           // Draw line downward (pure Y, uses M2+M3)
 
-  // Right eye: vertical line
-  "G0 X70 Y70\n"              // Rapid to top of right eye
-  "G1 X70 Y10\n"              // Draw line downward
+  // Right eye: vertical line (pure Y direction for accuracy)
+  "G0 X70 Y70\n"            // Rapid move to top of right eye
+  "G1 X70 Y10\n"            // Draw line downward (pure Y, uses M2+M3)
 
-  // Mouth: smooth smile as line segments (5 points along a curve)
-  // Parabolic-ish arc: y = -50 - 30*sin(t), x spans -60 to +60
-  "G0 X-60 Y-30\n"            // Rapid to left corner of mouth
-  "G1 X-35 Y-55\n"            // Segment 1: curve down-left
-  "G1 X0 Y-65\n"              // Segment 2: curve to bottom center
-  "G1 X35 Y-55\n"             // Segment 3: curve up-right
-  "G1 X60 Y-30\n"             // Segment 4: curve to right corner
+  // Mouth: smile arc (CCW from left to right, curving down)
+  // Arc center at (0, 20), radius ~64mm
+  "G0 X-50 Y-20\n"          // Rapid move to left corner of mouth
+  "G3 X90 Y-57 I90 J107\n"   // CCW arc to right corner (smile shape)
 
   // Return to center
-  "G0 X0 Y0\n"
+  "G0 X0 Y0\n"              // Rapid move back to origin
 ;
 
 #endif

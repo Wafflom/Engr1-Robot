@@ -82,19 +82,22 @@ Servo penServo;                             // Pen lift servo
 // ki: integral — builds up when stuck to push through friction
 
 // Travel PID (G0): pen up, gentle cruise
-float kp_travel = 40.0;
-float kd_travel = 2.0;
-float ki_travel = 0.0;
+float kp_travel = 20.0;
+float kd_travel = 0.5;
+float ki_travel = 1.0;
 
 // Straight-line PID (G1): pen down, accuracy matters
-float kp_line = 10.0;
-float kd_line = 0.0;
-float ki_line = 0.0;
+float kp_line = 30.0;
+float kd_line = 0.5;
+float ki_line = 1.0;
 
 // Curve PID (arc segments): aggressive to push through small segments
-float kp_curve = 80.0;
-float kd_curve = 10.0;
-float ki_curve = 15.0;
+float kp_curve = 30.0;
+float kd_curve = 0.5;
+float ki_curve = 1.0;
+
+// PWM minimum (to overcome min reuired power to actually move)
+int minPWM = 50;     // Minimum PWM to overcome motor dead zone (adjustable)
 
 // Active PID gains (set before each move)
 float kp, kd, ki;
@@ -107,8 +110,6 @@ float kp, kd, ki;
 // -- Arc parameters --
 #define ARC_SEG_MM        10.0f    // Subdivide arcs into segments this long (mm)
 #define CIRCLE_TIMEOUT_MS 20000UL  // Max time for a full circle (ms)
-#define CIRCLE_RAMP_RAD   0.5f    // How far from end to start decelerating (~30°)
-#define CIRCLE_MIN_SPD    80      // Slowest speed during deceleration ramp
 
 // ============================================================
 //  WHEEL GEOMETRY
@@ -303,7 +304,6 @@ void useLinePID()    { kp = kp_line;   kd = kd_line;   ki = ki_line;   }
 void useCurvePID()   { kp = kp_curve;  kd = kd_curve;  ki = ki_curve;  }
 
 // Convert float wheel speeds to direction + PWM and send to motors
-int minPWM = 80; // minimum motor power to overcome friction and actually have motor move
 void applyWheelSpeeds(float *w) {
   Adafruit_DCMotor *motors[3] = {m1, m2, m3};
 
@@ -334,13 +334,14 @@ void applyWheelSpeeds(float *w) {
   }
 }
 
-// Drive in direction (vx, vy) at given speed — used for open-loop circles
-void driveVelocity(float vx, float vy, int spd) {
+// Drive at full speed in direction (vx, vy) — used for open-loop circles
+void driveVelocity(float vx, float vy) {
   float w[3];
   inverseKinematics(vx, vy, w);
+  // Normalize so fastest wheel runs at SPEED (full power for circles)
   float peak = max(max(fabsf(w[0]), fabsf(w[1])), fabsf(w[2]));
   if (peak > 0.001f) {
-    float s = (float)spd / peak;
+    float s = (float)SPEED / peak;
     w[0] *= s; w[1] *= s; w[2] *= s;
   }
   applyWheelSpeeds(w);
@@ -480,7 +481,7 @@ void gcMoveToRaw(float absX, float absY) {
     return;
   }
 
-  useCurvePID();
+  useCurvePID();  // Gentle gains for arc segments
   resetOdometry();
   moveTo(dx, dy);
   gcX = absX; gcY = absY;
@@ -527,13 +528,12 @@ void gcMoveTo(float absX, float absY) {
 }
 
 // ============================================================
-//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep with decel ramp)
+//  G-CODE EXECUTION: FULL CIRCLE (velocity sweep)
 //
 //  For 360° arcs (endpoint == startpoint), we use open-loop
-//  velocity sweep — it's much smoother than PID segments.
-//  The robot drives tangent to the circle, tracking angle via
-//  theta = path_length / radius. Speed ramps down near the end
-//  to prevent overshoot from momentum.
+//  velocity sweep instead of PID — it's much smoother.
+//  The robot drives tangent to the circle, and we track
+//  the angle using: theta = path_length / radius
 // ============================================================
 
 void gcFullCircle(float radius, bool ccw) {
@@ -546,19 +546,9 @@ void gcFullCircle(float radius, bool ccw) {
   unsigned long t0 = millis();
 
   while (theta < 2.0f * PI) {
-    // Ramp speed down over the last CIRCLE_RAMP_RAD radians
-    float remaining = 2.0f * PI - theta;
-    int spd;
-    if (remaining < CIRCLE_RAMP_RAD) {
-      float frac = remaining / CIRCLE_RAMP_RAD;  // 1.0 → 0.0
-      spd = CIRCLE_MIN_SPD + (int)((SPEED - CIRCLE_MIN_SPD) * frac);
-    } else {
-      spd = SPEED;
-    }
-
     float vx = cosf(theta);
     float vy = ccw ? sinf(theta) : -sinf(theta);
-    driveVelocity(vx, vy, spd);
+    driveVelocity(vx, vy);
     delay(1);
 
     updateOdometry();
@@ -592,7 +582,7 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   float cy = gcY + cj;
   float radius = sqrtf(ci * ci + cj * cj);
 
-  // Full circle check (endpoint ≈ startpoint) → use smooth velocity sweep
+  // Full circle check (endpoint ≈ startpoint)
   if (fabsf(endX - gcX) < 1.0f && fabsf(endY - gcY) < 1.0f) {
     penDown();
     gcFullCircle(radius, ccw);
@@ -621,6 +611,8 @@ void gcArc(float endX, float endY, float ci, float cj, bool ccw) {
   penDown();
 
   // Move through each segment point on the arc
+  // Uses gcMoveToRaw (direct diagonal) because arc segments are small (~10mm)
+  // and L-shaped moves would make the arc jagged
   for (int s = 1; s <= numSegs; s++) {
     float frac = (float)s / (float)numSegs;
     float ang = ccw ? (startAng + sweep * frac) : (startAng - sweep * frac);
